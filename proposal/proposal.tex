@@ -5,10 +5,13 @@
 \title{Decide Title (File transfer protocol using RaptorQ)}
 \author{
   Raejoon Jung\\
-  \texttt{raejoon at stanford.edu}
+  \texttt{raejoon@stanford.edu}
+  \and
+  Yilong Li\\
+  \texttt{yilongl@cs.stanford.edu}
   \and 
   Yu Yan\\
-  \texttt{yuyan0 at stanford.edu}
+  \texttt{yuyan0@stanford.edu}
 }
 
 \maketitle
@@ -17,8 +20,57 @@
 \section{Design Goal}
 
 \section{Application of RaptorQ to File Transfer Protocols}
+Fountain codes are promising forward error correction codes due to the following properties,
+\begin{enumerate}
+  \item \textbf{Arbitrary amount of redundancy can be added on the fly.}  
+  \item \textbf{Original message can be retreived by any subset of the encoded
+  data}
+\end{enumerate}
+
+These properties can be beneficial in file transfer applications in two ways.
+\begin{enumerate}
+  \item \textbf{Transport protocol can be simplified without losing
+  reliability.}
+  \item \textbf{Goodput of the receiving end can be improved}
+\end{enumerate}
 
 \section{Feasibility and Potential Obstacles}
+For the file transfer application, three modules are required; (1) RaptorQ
+encoding/decoding module, (2) transport module, and (3) congestion control
+module. 
+
+There are open source implementations for RaptorQ (TODO: citation required).
+\texttt{libRaptorQ} project based on C++ seems to be a promising implementation
+that we can rely on for the coding portion of the application. The project
+claims that it can encode and decode within the throughput range of ~5 Mbps to
+~5 Gbps, depending on the encoding parameters. In our project, we would need to
+tune the parameters to avoid the coding module being the bottleneck of the file
+transfer.  Dynamic tuning based on packet loss statistics in the network would
+be required for optimization. However, we can start with finding a rough range
+of paremeter values for a single test case, for instance testing in the Stanford
+network. If it is impossible to get sufficient throughput for on-the-fly
+encoding, we can limit our application to (1) content providing with already
+encoded contents or (2) peer-to-peer file transfer where multiple senders are
+involved for a single file transfer.
+
+Transport module is responsible of transporting RaptorQ-encoded payload. It
+guarantees sufficient payload reception in the receving host for following the
+following decoding procedure. The module should not only initiate the flow, but
+also should know when to terminate the flow. This prevents the application from
+keep sending datagrams after the receiving end has correctly retrevied the file.
+The rateless property of RaptorQ can simplify the transport protocol, since it
+only requires a single acknowledgement when the receiving host retrevied
+sufficient number of datagrams in order to retreive the file. We expect this
+part to be straightforward.
+
+Congestion control module provide fairness over the application and other
+existing applications, which mostly are using TCP congestion control. The
+application will avoid occuping the majority of the bottleneck link bandwith in
+the transmission path. We can develop our own congestion control algorithm if
+there is room for optimization. If this is not feasible, using existing
+congestion control algorithms in TCP in also an option, even though we do not
+use TCP as our transport protocol. We expect most of the work will related to
+this module since we cannot rely on the existing kernel module for TCP.
 
 \section{Intellectual Contribution}
 
