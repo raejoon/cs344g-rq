@@ -74,7 +74,7 @@ There are open source implementations for RaptorQ. \cite{openrq},
 \cite{libraptorq} \texttt{libRaptorQ} project \cite{libraptorq} based on C++
 seems to be a promising implementation that we can rely on for the coding
 portion of the application. The project claims that it can encode and decode
-within the throughput range of ~5 Mbps to ~5 Gbps, depending on the encoding
+within the throughput range of $\sim$5 Mbps to $\sim$5 Gbps, depending on the encoding
 parameters. In our project, we would need to tune the parameters to avoid the
 coding module being the bottleneck of the file transfer.  Dynamic tuning based
 on packet loss statistics in the network would be required for optimization.
@@ -100,13 +100,33 @@ existing applications, which mostly are using TCP congestion control. The
 application will avoid occupying the majority of the bottleneck link bandwidth in
 the transmission path. We can develop our own congestion control algorithm if
 there is room for optimization. If this is not feasible, using existing
-congestion control algorithms in TCP in also an option, even though we do not
+congestion control algorithms in TCP is also an option, even though we do not
 use TCP as our transport protocol. We expect most of the work will be related to
 this module since we cannot rely on the existing kernel module for TCP.
 
 \section{Intellectual Contribution}
 
+This project will make several contributions:
+\begin{enumerate}
+  \item The first open source implementation of file transfer protocol based on
+  RaptorQ.
+  \item A (potentially) novel congestion control module for RaptorQ-based file
+  transfer application.
+  \item A comparative study of RaptorQ and TCP/IP for file transfer.
+  \item Upstream patches and optimizations to help push the \texttt{libRaptorQ}
+  project towards a mature open source RaptorQ implementation.
+\end{enumerate}
+
 \section{Schedule}
+
+The following tentative schedule distributes the work of this project over 8 weeks.
+\begin{itemize}
+  \item Experiment with the encoding/decoding module of \texttt{libRaptorQ}. (1 week)
+  \item Design and implement the transport module based on RaptorQ. (1 week)
+  \item Design and implement the congestion control module. (4 weeks)
+  \item Performance evaluation and comparative study. (1 week)
+  \item Final write-up. (1 week)
+\end{itemize}
 
 \bibliography{proposal}
 \bibliographystyle{acm}
