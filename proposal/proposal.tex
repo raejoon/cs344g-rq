@@ -1,15 +1,17 @@
 \documentclass{sig-alternate-10pt}
 
+\usepackage{url, enumitem}
+
 \begin{document}
 
 \title{Decide Title (File transfer protocol using RaptorQ)}
 \author{
-  Raejoon Jung\\
-  \texttt{raejoon@stanford.edu}
-  \and
   Yilong Li\\
   \texttt{yilongl@cs.stanford.edu}
   \and 
+  Raejoon Jung\\
+  \texttt{raejoon@stanford.edu}
+  \and
   Yu Yan\\
   \texttt{yuyan0@stanford.edu}
 }
@@ -20,38 +22,68 @@
 \section{Design Goal}
 
 \section{Application of RaptorQ to File Transfer Protocols}
-Fountain codes are promising forward error correction codes due to the following properties,
-\begin{enumerate}
-  \item \textbf{Arbitrary amount of redundancy can be added on the fly.}  
+RaptorQ code is a state-of-the-art fountain code. Fountain codes are promising
+forward error correction codes due to the following properties,
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Arbitrary amount of redundancy can be added on the fly.}
+  Fountain codes can generate an arbitrary number of encoded data for a given
+  original message. It provides arbitrary amount of redundancy to the encoded
+  data which allows to be resilient to arbitrary amount of data lost. As a
+  result, the receiving end can retreive the original message without any
+  retransmission.
+
   \item \textbf{Original message can be retreived by any subset of the encoded
-  data}
+  data of size of at least the size of the original message.} 
+  Fountain codes are a class of erasure codes which is reliable in transmission
+  over channels where subset of the transmitted data can be randomly erased.
+  Therefore it can provide robustness in applications over networks with packet
+  loss. Fountain codes including RaptorQ can achieve this as long as the
+  receiver receives the amount encoded data which is the same as the size of the
+  original message regardless of which endcoded data the receiver has failed to
+  receive.   
 \end{enumerate}
 
 These properties can be beneficial in file transfer applications in two ways.
-\begin{enumerate}
+\begin{enumerate}[label=(\alph*)]
   \item \textbf{Transport protocol can be simplified without losing
   reliability.}
-  \item \textbf{Goodput of the receiving end can be improved}
+  Unlike how TCP provides reliability by tracking successful transmission using
+  sequence numbers and acknowledgement, the sender can encode the source file
+  with RaptorQ and send arbitrary number of datagram until the receiver received
+  enough packets to decode the original file. Only one acknowledgement is
+  required and it is to avoid the sender sending excessive amount of datagrams,
+  not for reliabiltity guarantees.
+  \item \textbf{Goodput of the receiving end can be improved.}
+  Eleminating acknowledgements can also provide goodput benefits for short flows
+  in a network with packet losses. If the transport protocol requires an
+  acknowledgement followed by a retransmission, it has to wait for at least a
+  round-trip time whenever there is a packet loss for retransmission. However,
+  a RaptorQ-applied sender does not need to wait for any reponse and send a
+  packet that can contains the same amount of information as the lost packet.
 \end{enumerate}
+
+We expect to experience these benefits once we develop a file transfer
+application using RaptorQ.
 
 \section{Feasibility and Potential Obstacles}
 For the file transfer application, three modules are required; (1) RaptorQ
 encoding/decoding module, (2) transport module, and (3) congestion control
 module. 
 
-There are open source implementations for RaptorQ (TODO: citation required).
-\texttt{libRaptorQ} project based on C++ seems to be a promising implementation
-that we can rely on for the coding portion of the application. The project
-claims that it can encode and decode within the throughput range of ~5 Mbps to
-~5 Gbps, depending on the encoding parameters. In our project, we would need to
-tune the parameters to avoid the coding module being the bottleneck of the file
-transfer.  Dynamic tuning based on packet loss statistics in the network would
-be required for optimization. However, we can start with finding a rough range
-of paremeter values for a single test case, for instance testing in the Stanford
-network. If it is impossible to get sufficient throughput for on-the-fly
-encoding, we can limit our application to (1) content providing with already
-encoded contents or (2) peer-to-peer file transfer where multiple senders are
-involved for a single file transfer.
+There are open source implementations for RaptorQ. \cite{openrq},
+\cite{libraptorq} \texttt{libRaptorQ} project \cite{libraptorq} based on C++
+seems to be a promising implementation that we can rely on for the coding
+portion of the application. The project claims that it can encode and decode
+within the throughput range of ~5 Mbps to ~5 Gbps, depending on the encoding
+parameters. In our project, we would need to tune the parameters to avoid the
+coding module being the bottleneck of the file transfer.  Dynamic tuning based
+on packet loss statistics in the network would be required for optimization.
+However, we can start with finding a rough range of paremeter values for a
+single test case, for instance testing in the Stanford network. If it is
+impossible to get sufficient throughput for on-the-fly encoding, we can limit
+our application to (1) content providing with already encoded contents or (2)
+peer-to-peer file transfer where multiple senders are involved for a single file
+transfer.
 
 Transport module is responsible of transporting RaptorQ-encoded payload. It
 guarantees sufficient payload reception in the receving host for following the
@@ -75,5 +107,8 @@ this module since we cannot rely on the existing kernel module for TCP.
 \section{Intellectual Contribution}
 
 \section{Schedule}
+
+\bibliography{proposal}
+\bibliographystyle{acm}
 
 \end{document}
