@@ -4,7 +4,7 @@
 
 \begin{document}
 
-\title{Decide Title (File transfer protocol using RaptorQ)}
+\title{RaptorQ-based File Transfer Protocol}
 \author{
   Yilong Li\\
   \texttt{yilongl@cs.stanford.edu}
@@ -18,8 +18,22 @@
 
 \maketitle
 \section{Introduction}
+The File Transfer Protocol (FTP) has been widely used to transfer computer files between hosts for quite a long time, especially within the internal networks of organizations. It has many advantages such as no size limitation on single transfers, the ability of transfer resumption if the connection is lost, faster transfer speed, etc. Even though with disadvantages like inadequate security, FTP still works better than HTTP in some specific scenarios.
+
+To get the most out of FTP, we propose to make a RaptorQ-based FTP. The original FTP is based on TCP and thus suffers the shortcomings of TCP. For example, it has to send acknowledgement for each datagram to provide reliability, leading to limitation on the goodput. Indeed, consider the case where there is packet loss, retransmission wastes at least a round-trip time. 
+
+However, RaptorQ can provide an alternate method for achieving reliability, with only one acknowledgement required. More specifically, the receiver can retrieve the original file by performing calculations on any enough subset of the data flow encoded by RaptorQ, and send back only one acknowledge to indicate success to the sender. The sender does not need any responses in the middle of generating arbitrary redundancy and sending datagrams. 
+
+In addition, we suppose that RaptorQ-based FTP can further benefit from a customized congestion control algorithm. Therefore, we will design and implement our own congestion control algorithm as well to boost the performance, but avoid congestion collapse in the meantime.
+
+Finally, we will evaluate the performance of RaptorQ-based FTP and compare the results with TCP-based FTP.
 
 \section{Design Goal}
+\begin{enumerate}
+\item To improve the goodput of data transfer.
+\item To maintain the reliability.
+\item To optimize the performance but avoid congestion collapse meanwhile.
+\end{enumerate}
 
 \section{Application of RaptorQ to File Transfer Protocols}
 RaptorQ code is a state-of-the-art fountain code. Fountain codes are promising
@@ -70,8 +84,8 @@ For the file transfer application, three modules are required; (1) RaptorQ
 encoding/decoding module, (2) transport module, and (3) congestion control
 module. 
 
-There are open source implementations for RaptorQ. \cite{openrq},
-\cite{libraptorq} \texttt{libRaptorQ} project \cite{libraptorq} based on C++
+There are open source implementations for RaptorQ \cite{openrq},
+\cite{libraptorq}. \texttt{libRaptorQ} project \cite{libraptorq} based on C++
 seems to be a promising implementation that we can rely on for the coding
 portion of the application. The project claims that it can encode and decode
 within the throughput range of $\sim$5 Mbps to $\sim$5 Gbps, depending on the encoding

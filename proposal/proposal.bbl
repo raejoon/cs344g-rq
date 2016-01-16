@@ -1,0 +1,11 @@
+\begin{thebibliography}{1}
+
+\bibitem{openrq}
+Openrq: an open-source raptorq implementation.
+\newblock \url{http://openrq-team.github.io/openrq}.
+
+\bibitem{libraptorq}
+Raptorq rfc6330 c++11 implementation.
+\newblock \url{http://github.com/LucaFulchir/libRaptorQ}.
+
+\end{thebibliography}
