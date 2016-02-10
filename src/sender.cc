@@ -1,71 +1,83 @@
 #include <iostream>
 #include <cstdlib>
+#include <fstream>
 #include "socket.hh"
 
-//char* getMetadata();
-//char* getNextSymbol();
-
-UDPSocket connect_wrapper(Address addr) {
+UDPSocket connectWrapper(Address addr) {
     UDPSocket sock = UDPSocket();
     sock.connect(addr);
-    sock.send("I have something to send.");
+    sock.send("Sender: I have something to send\n");
 
     return sock;
 }
 
-int requestHandshake(UDPSocket sock) {
-    // TODO: metadata packetization code
+int requestHandshake(UDPSocket& sock, size_t filesz) {
+    // TODO: add failure code and return -1
+    // TODO: add metadata code for libraptorq
     while (true) {
-        sock.send("This is the metadata for decoding");
-
+        std::string payload = to_string(filesz);
+        sock.send(payload);
         const unsigned char* recvPayload = (const unsigned char*) sock.recv().payload.c_str();
-        if (recvPayload[0] == 0xf2) break;
+        if (recvPayload[0] == 0xf2) {
+          cout << "Metadata: received ack\n";
+          break;
+        }
     }
-
-    std::cout << "Metadata sent" << std::endl;
-
     return 0;
 }
 
-int main(int argc, char* argv[]) {
-    // check the command-line arguments
-    if (argc < 1) abort(); 
-    if (argc != 3 ) {
-      std::cerr << "Usage: " << argv[0] << " HOST PORT " << std::endl;
+size_t getFileSize(std::ifstream& infile) {
+    std::streampos filesz;
+    infile.seekg(0, std::ios::end);
+    filesz = infile.tellg();
+    infile.seekg(0, std::ios::beg);
+
+    return (size_t) filesz;
+}
+
+int main( int argc, char *argv[] )
+{
+    /* check the command-line arguments */
+    if ( argc < 1 ) { abort(); } /* for sticklers */
+    if ( argc != 3 ) {
+      std::cerr << "Usage: " << argv[ 0 ] << " HOST PORT" << std::endl;
       return EXIT_FAILURE;
     }
 
-    // fetch command-line arguments
-    const std::string host {argv[1]}, port {argv[2]};
 
-    // establish connection
-    UDPSocket sk = connect_wrapper(Address(host, port));
+    // prepare file
+    std::ifstream infile;
+    infile.open("demo.txt", std::ios::in | std::ios::binary);
+    infile.unsetf(std::ios::skipws);
+    size_t filesz = getFileSize(infile);
+  
+    // connection
+    const std::string host { argv[ 1 ] }, port { argv[ 2 ] };
+    UDPSocket sock = connectWrapper(Address(host, port));
+   
+    // handshake
+    int result = requestHandshake(sock, filesz);
+    if (result == -1) std::cerr << "Something is wrong!" << std::endl;
+  
+    // file transfer
+    // TODO: change for libraptorq
+    size_t bufsz = 8;
+    char *buffer = new char[bufsz + 1];
+    buffer[8] = '\0';
+    size_t sendsz = 0;
+    while(true) {
+      infile.read(buffer, (int)bufsz);
 
-    // get file
-    /*
-    std::string filename;    
-    std::vector<alignment>::iterator fileBegin = getFileBegin(filename);
-    std::vector<alignment>::iterator fileEnd = getFileEnd(filename);
-    */
+      std::string payload = (const char *) buffer;
+      sock.send(payload);
 
-    // encode and send
-    //RaptorQ::Encoder encode(fileBegin, fileEnd, subSymbolSize, symbolSize, maxBlockSize);
-    
-    // send metadata
-    //int result = requestHandshake(sk, metadata); // block until ACK, might need total num of blocks
-    //if (result == -1) {}
-
-    // send symbols
-    /*
-    for (block_iter : block) {
-        while (true) {
-            sk.send(getNextSymbol());
-            if (pollIfFinalAckArrives()) {
-                break;
-            }         
-        }
+      sendsz += bufsz;
+      if (sendsz >= filesz) break;
     }
-    */
+
+    // clean up
+    delete[] buffer;
+    infile.close();
 
     return EXIT_SUCCESS;
 }
