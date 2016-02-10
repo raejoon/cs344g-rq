@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <fstream>
 #include "socket.hh"
+#include "RaptorQ.hpp"
 
 UDPSocket connectWrapper(Address addr) {
     UDPSocket sock = UDPSocket();

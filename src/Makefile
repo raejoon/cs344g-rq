@@ -4,10 +4,10 @@ CXX = g++
 #  -g		   compile with debug information
 #  -Wall  	   give all diagnostic warnings
 #  -pedantic   require compliance with ANSI standard
-CPPFLAGS = -g -Wall -pedantic -Wextra -Weffc++ -Werror -std=c++11 -pthread
+CPPFLAGS = -g -Wall -pedantic -Wextra -Weffc++ -Werror -std=c++11 -pthread -I/usr/local/include/RaptorQ/
 
 # The LDFLAGS variable sets flags for linker
-LDFLAGS = 
+LDFLAGS = -L/usr/local/lib
 
 # list of files that are part of the project
 # If you add/change names of header/source files, here is where you edit the
