@@ -131,7 +131,9 @@ UDPSocket::received_datagram UDPSocket::recv( void )
   received_datagram ret = { Address( datagram_source_address,
 				     header.msg_namelen ),
 			    timestamp,
-			    string( msg_payload, recv_len ) };
+          msg_payload,
+          recv_len
+			    };
 
   return ret;
 }

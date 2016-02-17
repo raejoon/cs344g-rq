@@ -4,6 +4,8 @@
 #include "socket.hh"
 #include "RaptorQ.hpp"
 
+typedef uint32_t SymbolId;
+
 UDPSocket connectWrapper(Address addr) {
     UDPSocket sock = UDPSocket();
     sock.connect(addr);
@@ -12,14 +14,19 @@ UDPSocket connectWrapper(Address addr) {
     return sock;
 }
 
-int requestHandshake(UDPSocket& sock, OTI_Common_Data OTICommon, OTI_Scheme_Specific_Data OTIScheme) {
+int requestHandshake(UDPSocket& sock, 
+      size_t filesz, OTI_Common_Data OTICommon, OTI_Scheme_Specific_Data OTIScheme) 
+{
     // TODO: add failure code and return -1
     while (true) {
-        std::string common_s = to_string(OTICommon);
-        std::string scheme_s = to_string(OTIScheme);
-        std::string payload = common_s + scheme_s;
-        sock.send(payload);
-        const unsigned char* recvPayload = (const unsigned char*) sock.recv().payload.c_str();
+        size_t buflen = sizeof(size_t) + sizeof(OTI_Common_Data) + sizeof(OTI_Scheme_Specific_Data);
+        unsigned char buf[100];
+        memcpy(buf, &filesz, sizeof(size_t))
+        memcpy(buf + sizeof(size_t), &OTICommon, 8);
+        memcpy(buf + sizeof(size_t) + sizeof(OTI_Common_Data), &OTIScheme, 4);
+        sock.sendbytes(buf, buflen);
+
+        const unsigned char* recvPayload = (const unsigned char*) sock.recv().payload;
         if (recvPayload[0] == 0xf2) {
           cout << "Metadata: received ack\n";
           break;
@@ -73,6 +80,17 @@ size_t readFile(std::string filename, std::vector<Alignment>& content)
     return static_cast<size_t>(filesz);
 }
 
+template <typename Alignment>
+void sendSymbol(UDPSocket& sock, SymbolId id, std::vector<Alignment>& symbol) {
+  char buf[10000];
+  uint32_t buflen = sizeof(SymbolId) + sizeof(Alignment)*symbol.size();
+  
+  memcpy(buf, &id, sizeof(SymboldId));
+  memcpy(buf + sizeof(SymboldId), &symbol[0], sizeof(Alignment)*symbol.size());
+
+  sock.sendbytes(buf, buflen);
+}
+
 int main( int argc, char *argv[] )
 {
     /* check the command-line arguments */
@@ -111,7 +129,7 @@ int main( int argc, char *argv[] )
     UDPSocket sock = connectWrapper(Address(host, port));
    
     // handshake
-    int result = requestHandshake(sock, encoder.OTI_Common(), encoder.OTI_Scheme_Specific());
+    int result = requestHandshake(sock, filesz, encoder.OTI_Common(), encoder.OTI_Scheme_Specific());
     if (result == -1) std::cerr << "Something is wrong!" << std::endl;
   
     // TODO: need to add ack polling code
@@ -125,9 +143,7 @@ int main( int argc, char *argv[] )
             auto begin = sourceSymbol.begin();
             (*iter) (begin, sourceSymbol.end());
 
-            // TODO: add send code (but can't use keith's code! sending as a
-            // string cuts the payload because of interpreting 0x00 as null terminator)
-
+            sendSymbol(sock, (*iter).id(), sourceSymbol);
         }
 
         for (auto iter = block.begin_repair(); iter != block.end_repair(block.max_repair()); ++iter) {
@@ -137,9 +153,7 @@ int main( int argc, char *argv[] )
             auto begin = repairSymbol.begin();
             (*iter) (begin, repairSymbol.end());
 
-            // TODO: add send code (but can't use keith's code! sending as a
-            // string cuts the payload because of interpreting 0x00 as null terminator)
-
+            sendSymbol(sock, (*iter).id(), repairSymbol);
         }
     }
 

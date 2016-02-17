@@ -20,13 +20,20 @@ UDPSocket listen_wrapper(Address& senderAddr) {
     return sock;
 }
 
-size_t respondHandshake(UDPSocket& sk, Address& senderAddr) {
-    size_t filesz = stoi(sk.recv().payload);     
+void respondHandshake(UDPSocket& sk, Address& senderAddr, size_t& filesz,
+  OTI_Common_Data& otiCommon, OTI_Scheme_Specific_Data& otiScheme) {
+    UDPSocket::received_datagram datagram = sk.recv();
+    const char *payload = datagram.payload;
+    ssize_t recvlen = datagram.recvlen;
+
+    filesz = *(size_t*) payload;
+    otiCommon = *(uint64_t*) (payload + sizeof(size_t));
+    otiScheme = *(uint32_t*) (payload + sizeof(size_t) + sizeof(uint64_t));
+
     const char data[2] = {(char)0xf2, '\0'};
     const std::string payload = data;
     sk.sendto(senderAddr, payload);
-    std::cout << "Ready to receive file of size: " << filesz << std::endl;
-    return filesz;
+    std::cout << "Got metadata. Ready to receive file."  << std::endl;
 }
 
 int main( int argc, char *argv[] )
@@ -40,7 +47,19 @@ int main( int argc, char *argv[] )
 
     Address senderAddr;
     UDPSocket sk = listen_wrapper(senderAddr);
-    size_t filesz = respondHandshake(sk, senderAddr);
+
+    size_t filesz;
+    OTI_Common_Data otiCommon;
+    OTI_Scheme_Specific_Data otiScheme;
+
+    respondHandshake(sk, senderAddr, filesz, otiCommon, otiScheme);
+
+    RaptorQ::Decoder<typename std::vector<Alignment>::iterator,
+      typename std::vector<Alignment>::iterator>
+        decoder(filesz, otiCommon, otiScheme);
+
+    std::vector<Alignment> decodedBlock;
+    decodedBlock.reserve(filesz);
 
     std::ofstream outfile;
     outfile.open("recvfile", ios::out | ios::binary);
