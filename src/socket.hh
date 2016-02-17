@@ -57,10 +57,12 @@ public:
 
   /* send datagram to specified address */
   void sendto( const Address & peer, const std::string & payload );
-
+  void sendbytesto( const Address & peer, const char *payload, size_t length);
+  
   /* send datagram to connected address */
   void send( const std::string & payload );
-
+  void sendbytes( const char *payload, size_t length);
+  
   /* turn on timestamps on receipt */
   void set_timestamps( void );
 };

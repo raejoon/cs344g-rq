@@ -170,6 +170,40 @@ void UDPSocket::send( const string & payload )
   }
 }
 
+/* send datagram to specified address */
+void UDPSocket::sendbytesto( const Address & destination, const char *payload, size_t length)
+{
+  const ssize_t bytes_sent =
+    SystemCall( "sendto", ::sendto( fd_num(),
+				    payload,
+				    length,
+				    0,
+				    &destination.to_sockaddr(),
+				    destination.size() ) );
+
+  register_write();
+
+  if ( size_t( bytes_sent ) != length ) {
+    throw runtime_error( "datagram payload too big for sendto()" );
+  }
+}
+
+/* send datagram to connected address */
+void UDPSocket::sendbytes( const char *payload, size_t length )
+{
+  const ssize_t bytes_sent =
+    SystemCall( "send", ::send( fd_num(),
+        payload,
+        length,
+				0 ) );
+
+  register_write();
+
+  if ( size_t( bytes_sent ) != length ) {
+    throw runtime_error( "datagram payload too big for send()" );
+  }
+}
+
 /* mark the socket as listening for incoming connections */
 void TCPSocket::listen( const int backlog )
 {
