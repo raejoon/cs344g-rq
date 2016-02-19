@@ -10,6 +10,7 @@ link_directories(/usr/local/lib/)
 set(SOURCE_FILES
     src/address.cc
     src/address.hh
+    src/buffer.hh
     src/file_descriptor.cc
     src/file_descriptor.hh
     src/poller.cc
@@ -20,7 +21,10 @@ set(SOURCE_FILES
     src/socket.hh
     src/timestamp.cc
     src/timestamp.hh
-    src/util.hh)
+    src/util.hh
+    src/wire_format.hh)
 
-add_executable(sender src/sender.cc src/address.cc src/socket.cc src/file_descriptor.cc src/timestamp.cc src/poller.cc)
-add_executable(receiver src/receiver.cc src/address.cc src/socket.cc src/file_descriptor.cc src/timestamp.cc src/poller.cc)
+add_executable(sender src/sender.cc src/address.cc src/socket.cc src/file_descriptor.cc src/timestamp.cc
+        src/poller.cc)
+add_executable(receiver src/receiver.cc src/address.cc src/socket.cc src/file_descriptor.cc
+        src/timestamp.cc src/poller.cc)
