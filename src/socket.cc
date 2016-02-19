@@ -103,8 +103,7 @@ UDPSocket::received_datagram UDPSocket::recv( void )
   header.msg_controllen = sizeof( msg_control );
 
   /* call recvmsg */
-  ssize_t recv_len = SystemCall( "recvmsg",
-				 recvmsg( fd_num(), &header, 0 ) );
+  ssize_t recv_len = SystemCall( "recvmsg", recvmsg( fd_num(), &header, 0 ) );
 
   register_read();
 
@@ -128,12 +127,11 @@ UDPSocket::received_datagram UDPSocket::recv( void )
     ts_hdr = CMSG_NXTHDR( &header, ts_hdr );
   }
 
-  received_datagram ret = { Address( datagram_source_address,
-				     header.msg_namelen ),
-			    timestamp,
-          msg_payload,
-          recv_len
-			    };
+  received_datagram ret = {Address(datagram_source_address,
+                                   header.msg_namelen),
+                           timestamp,
+                           msg_payload,
+                           recv_len};
 
   return ret;
 }
