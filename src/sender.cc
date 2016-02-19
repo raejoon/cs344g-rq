@@ -11,6 +11,7 @@
 */
 
 #include <iostream>
+#include <RaptorQ.hpp>
 
 #include "socket.hh"
 
