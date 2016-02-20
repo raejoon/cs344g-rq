@@ -6,6 +6,8 @@
 class Buffer
 {
 public:
+    const static size_t MAX_BUF_LEN = 65536;
+
     Buffer() : length(0) {};
 
     Buffer(char* data, size_t length)
@@ -14,7 +16,9 @@ public:
         std::memcpy(buf, data, length);
     }
 
-    const static size_t MAX_BUF_LEN = 65536;
+    void clear() {
+        length = 0;
+    }
 
     template<typename T, typename... Args>
     T* emplaceAppend(Args&&... args) {

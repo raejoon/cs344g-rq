@@ -31,13 +31,19 @@ int main( int argc, char *argv[] )
     /* receive one UDP datagram, and print out the payload */
     UDPSocket::received_datagram datagram = udp_socket.recv();
     Buffer payload(datagram.payload, datagram.recvlen);
-    const WireFormat::HandshakeReq* p = payload.get<WireFormat::HandshakeReq>(0);
+    const WireFormat::HandshakeReq* req = payload.get<WireFormat::HandshakeReq>(0);
 
     std::cout << "Sender address: " << datagram.source_address.to_string() << std::endl;
-    std::cout << "Received " << datagram.recvlen << " bytes." << std::endl;
-    std::cout << "fileSize = " << p->fileSize << std::endl;
-    std::cout << "OTI_COMMON = " << p->commonData << std::endl;
-    std::cout << "OTI_SCHEME_SPECIFIC = " << p->schemeSpecificData << std::endl;
+    std::cout << "Received handshake request " << datagram.recvlen << " bytes." << std::endl;
+    std::cout << "fileSize = " << req->fileSize << std::endl;
+    std::cout << "OTI_COMMON = " << req->commonData << std::endl;
+    std::cout << "OTI_SCHEME_SPECIFIC = " << req->schemeSpecificData << std::endl;
+
+    /* send back HandshakeResp */
+//    payload.clear();
+//    WireFormat::HandshakeResp* resp = payload.emplaceAppend<WireFormat::HandshakeResp>();
+//    std::memcpy(resp->addr, local_addr.ip().c_str(), local_addr.ip().length());
+//    resp->port = local_addr.port();
 
     return EXIT_SUCCESS;
 }

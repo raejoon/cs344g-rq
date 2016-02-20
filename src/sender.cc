@@ -91,20 +91,27 @@ int main( int argc, char *argv[] )
     /* fetch command-line arguments */
     const std::string host { argv[ 1 ] }, port { argv[ 2 ] };
 
-    /* XXX your code here */
-
     /* construct UDP socket */
     UDPSocket udp_socket;
 
     /* connect the socket to the given host and port */
     udp_socket.connect(Address(host, port));
 
-    /* send payload */
+    /* send handshake req */
     std::cout << "Sending " << payload.size() << " bytes." << std::endl;
     std::cout << "fileSize = " << fileSize << std::endl;
     std::cout << "OTI_COMMON = " << encoder.OTI_Common() << std::endl;
     std::cout << "OTI_SCHEME_SPECIFIC = " << encoder.OTI_Scheme_Specific() << std::endl;
     udp_socket.sendbytes(payload.c_str(), payload.size());
+
+    /* precompute intermediate symbols */
+    encoder.precompute(1, false);
+
+    /* receive handshake ack */
+    // TODO
+
+    /* start sending encoding symbols in a round-robin fashion */
+
 
     return EXIT_SUCCESS;
 }
