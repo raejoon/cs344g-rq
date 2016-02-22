@@ -19,10 +19,7 @@ struct HandshakeResp {
 
 struct Ack {
     // RaptorQ supports at most 256 blocks
-    uint64_t mask0;
-    uint64_t mask1;
-    uint64_t mask2;
-    uint64_t mask3;
+    uint64_t mask[4];
 } __attribute__((packed));
 
 }

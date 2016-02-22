@@ -29,6 +29,13 @@ public:
     }
 
     template<typename T>
+    T* append() {
+        void* allocation = buf + length;
+        length += sizeof(T);
+        return static_cast<T*>(allocation);
+    }
+
+    template<typename T>
     const T*
     get(size_t offset) {
         return reinterpret_cast<const T*>(buf + offset);

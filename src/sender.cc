@@ -15,10 +15,9 @@
 #include <RaptorQ.hpp>
 
 #include "buffer.hh"
+#include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
-
-typedef uint32_t  Alignment;
 
 template<typename Alignment>
 size_t readFile(std::string filename, std::vector<Alignment>& content)
@@ -70,8 +69,8 @@ int main( int argc, char *argv[] )
     std::vector<Alignment> dataToSend;
     size_t fileSize = readFile(argv[3], dataToSend);
 
-    /*  */
-    const uint16_t subSymbolSize = 1 << 10;
+    /* setting parameters */
+    const uint16_t subSymbolSize = 1 << 13;
     const uint16_t symbolSize = subSymbolSize;
     const uint32_t numSymPerBlock = 100;
     RaptorQ::Encoder<typename std::vector<Alignment>::iterator,
@@ -82,6 +81,7 @@ int main( int argc, char *argv[] )
                     symbolSize,
                     numSymPerBlock * symbolSize);
 
+    // TODO: have two Buffers, one for sending, one for receiving?
     Buffer payload;
     WireFormat::HandshakeReq* p = payload.emplaceAppend<WireFormat::HandshakeReq>();
     p->fileSize = fileSize;
@@ -108,10 +108,59 @@ int main( int argc, char *argv[] )
     encoder.precompute(1, false);
 
     /* receive handshake ack */
-    // TODO
+    UDPSocket::received_datagram handshakeAck = udp_socket.recv();
+    Buffer buffer(handshakeAck.payload, handshakeAck.recvlen);
+    const WireFormat::HandshakeResp* resp = buffer.get<WireFormat::HandshakeResp>(0);
+    std::cout << "Received handshake ack: ip = " << std::string(resp->addr)
+              << " port = " << resp->port << std::endl;
 
     /* start sending encoding symbols in a round-robin fashion */
+    using SYM_ITER = decltype((*encoder.begin()).begin_source());
+    std::vector<std::pair<SYM_ITER, SYM_ITER>> symIters;
+    for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
+        auto block = *encoder.begin().operator++(sbn);
+        symIters.emplace_back(block.begin_source(), block.end_source());
+    }
 
+    size_t numOfAlignPerSymbol = static_cast<size_t>(
+            std::ceil(static_cast<float>(symbolSize) / sizeof(Alignment)));
+    std::vector<Alignment> symbol;
+    symbol.reserve(numOfAlignPerSymbol);
+    symbol.insert(symbol.begin(), numOfAlignPerSymbol, 0);
+
+    // TODO: change to while-loop and properly check ack
+    for (uint16_t esi = 0; esi < 999; esi++) {
+        if (esi >= encoder.begin().operator*().symbols()) {
+            break;
+        }
+
+//    while (true) {
+        for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
+            usleep(10000);
+            // TODO: check if this block has been successfully decoded by receiver
+
+            /* Switch to repair symbol if we have drained the source symbols */
+            if (symIters[sbn].first == symIters[sbn].second) {
+                auto block = *encoder.begin().operator++(sbn);
+                new (&symIters[sbn].first) SYM_ITER(block.begin_repair());
+                new (&symIters[sbn].second) SYM_ITER(block.end_repair(
+                        block.max_repair()));
+            }
+
+            auto& symIter = symIters[sbn].first;
+            // TODO: extract a getSymbol method
+            auto begin = symbol.begin();
+            (*symIter)(begin, symbol.end());
+            /* convert symbol to binary blob */
+            payload.clear();
+            *payload.append<uint32_t>() = (*symIter).id();
+            for (Alignment al : symbol) {
+                *payload.append<Alignment>() = al;
+            }
+            udp_socket.sendbytes(payload.c_str(), payload.size());
+            ++symIter;
+        }
+    }
 
     return EXIT_SUCCESS;
 }
