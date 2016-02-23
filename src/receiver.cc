@@ -19,6 +19,7 @@ int main( int argc, char *argv[] )
     // Wait for handshake request and send back handshake response
     std::unique_ptr<UDPSocket> udpSocket{new UDPSocket};
     udpSocket->bind(Address("0", 0));
+    printf("%s\n", udpSocket->local_address().to_string().c_str());
 
     UDPSocket::received_datagram datagram = udpSocket->recv();
     Address senderAddr = datagram.source_address;
@@ -35,16 +36,12 @@ int main( int argc, char *argv[] )
     udpSocket->sendbytesto(senderAddr, sendBuffer.c_str(), sendBuffer.size());
 
     // Start receiving symbols
-    RaptorQSymbol symbol(NUM_ALIGN_PER_SYMBOL, 0);
+    RaptorQSymbol symbol {0};
 
-    std::vector<std::vector<Alignment>> blocks(decoder.blocks());
-//    for (auto& block : blocks) {
-//        block.insert(block.begin(), )
-//    }
-
+    std::vector<RaptorQBlock> blocks(decoder.blocks());
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
-        int numAlignPerBlock = decoder.block_size(sbn) / sizeof(Alignment);
-        blocks[sbn].insert(blocks[sbn].begin(), numAlignPerBlock, 0);
+        blocks[sbn] = RaptorQBlock(
+                decoder.block_size(sbn) / sizeof(Alignment), 0);
     }
 
     Bitmask256 decodedBlocks;
@@ -58,13 +55,13 @@ int main( int argc, char *argv[] )
                static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
         std::memcpy(symbol.data(), dataPacket->raw, SYMBOL_SIZE);
 
-        auto begin = symbol.begin();
+        Alignment* begin = symbol.begin();
         decoder.add_symbol(begin, symbol.end(), dataPacket->id);
 
-        auto begin2 = blocks[sbn].begin();
-        if (decoder.decode(begin2, blocks[sbn].end(), sbn) > 0) {
+        begin = blocks[sbn].data();
+        if (decoder.decode(begin, begin + blocks[sbn].size(), sbn) > 0) {
             // send ACK for block sbn
-            std::cout << "Block " << static_cast<int>(sbn) << " decoded" << std::endl;
+            printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
             sendBuffer.clear();
             sendBuffer.emplaceAppend<WireFormat::Ack>(decodedBlocks.bitset);

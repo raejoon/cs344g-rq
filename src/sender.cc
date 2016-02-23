@@ -130,21 +130,23 @@ void transmit(RaptorQEncoder& encoder,
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
 
-    RaptorQSymbol symbol(NUM_ALIGN_PER_SYMBOL, 0);
+    RaptorQSymbol symbol {0};
     Buffer sendBuffer;
     Buffer recvBuffer;
 
     uint32_t round = 0;
-    const uint32_t MAX_ROUND = (encoder.block_size(0) / MAX_SYM_PER_BLOCK) * 2;
+    const uint32_t MAX_ROUND = MAX_SYM_PER_BLOCK * 2;
     while (decodedBlocks.count() < encoder.blocks()) {
         if (round++ > MAX_ROUND) {
-            printf("Error: we have sent way too many symbols\n");
+            printf("Error: we have sent way too many symbols; round = %u\n",
+                   round);
             exit(EXIT_SUCCESS);
         }
 
-        uint8_t sbn = 0;
+        uint8_t sbn = std::numeric_limits<uint8_t>::max();
         for (const auto& block : encoder) {
             // Check if this block has been successfully decoded by the receiver
+            sbn++;
             if (decodedBlocks.test(sbn)) {
                 continue;
             }
@@ -152,7 +154,6 @@ void transmit(RaptorQEncoder& encoder,
             // If we have sent at least K symbols for this block, poll to see
             // if the receiver has acknowledged the block
             if (round >= block.symbols()) {
-                std::cout << "Polling... Round = " << round << std::endl;
                 try {
                     UDPSocket::received_datagram recvDatagram = udpSocket->recv();
                     recvBuffer.set(recvDatagram.payload, recvDatagram.recvlen);
@@ -194,7 +195,6 @@ void transmit(RaptorQEncoder& encoder,
             congestionControl();
             udpSocket->sendbytes(sendBuffer.c_str(), sendBuffer.size());
             ++symbolIter;
-            sbn++;
         }
     }
 }
@@ -238,7 +238,7 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    // Start tranmission
+    // Start transmission
     transmit(encoder, udpSocket.get());
 
     // Tear down connection

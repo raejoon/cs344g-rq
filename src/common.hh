@@ -29,17 +29,15 @@ typedef uint32_t Alignment;
 
 constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / sizeof(Alignment);
 
-typedef RaptorQ::Encoder<typename std::vector<Alignment>::iterator,
-        typename std::vector<Alignment>::iterator> RaptorQEncoder;
+typedef std::array<Alignment, NUM_ALIGN_PER_SYMBOL> RaptorQSymbol;
 
-typedef RaptorQ::Decoder<typename std::vector<Alignment>::iterator,
-        typename std::vector<Alignment>::iterator> RaptorQDecoder;
+typedef std::vector<Alignment> RaptorQBlock;
 
-typedef RaptorQ::Symbol_Iterator<typename std::vector<Alignment>::iterator,
-        typename std::vector<Alignment>::iterator> RaptorQSymbolIterator;
+typedef RaptorQ::Encoder<Alignment*, Alignment*> RaptorQEncoder;
 
-// TODO: change to std::array<Alignment, NUM_ALIGN_PER_SYMBOL>?
-typedef std::vector<Alignment> RaptorQSymbol;
+typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
+
+typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
 /**
  * Cast one size of int down to another one.
@@ -125,16 +123,16 @@ class FileWrapper {
         , data(std::move(data))
     {}
 
-    typename std::vector<Alignment>::iterator
+    Alignment*
     begin()
     {
-        return data.begin();
+        return data.data();
     }
 
-    typename std::vector<Alignment>::iterator
+    Alignment*
     end()
     {
-        return data.end();
+        return data.data() + data.size();
     }
 
     size_t size() const
