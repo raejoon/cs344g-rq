@@ -16,83 +16,63 @@ int main( int argc, char *argv[] )
         return EXIT_FAILURE;
     }
 
-    /* XXX your code here */
+    // Wait for handshake request and send back handshake response
+    std::unique_ptr<UDPSocket> udpSocket{new UDPSocket};
+    udpSocket->bind(Address("0", 0));
 
-    /* construct UDP socket */
-    UDPSocket udp_socket;
-
-    /* "bind" the socket to host "0", port "0" */
-    udp_socket.bind(Address("0", 0));
-
-    /* print out the local address to standard error (std::cerr) */
-    /* the output should look something like "0.0.0.0 12345\n" */
-    Address local_addr = udp_socket.local_address();
-    std::cerr << local_addr.ip() << " " << local_addr.port() << std::endl;
-
-    /* receive one UDP datagram, and print out the payload */
-    UDPSocket::received_datagram datagram = udp_socket.recv();
+    UDPSocket::received_datagram datagram = udpSocket->recv();
     Address senderAddr = datagram.source_address;
-    Buffer payload(datagram.payload, datagram.recvlen);
-    const WireFormat::HandshakeReq* req = payload.get<WireFormat::HandshakeReq>(0);
+    Buffer recvBuffer(datagram.payload, datagram.recvlen);
+    const WireFormat::HandshakeReq* req = recvBuffer.get<WireFormat::HandshakeReq>(0);
+    printf("Sending handshake request: {connection Id = %u, file size = %zu, "
+                   "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           req->connectionId, req->fileSize, req->otiCommon, req->otiScheme);
 
-    std::cout << "Sender address: " << senderAddr.to_string() << std::endl;
-    std::cout << "Received handshake request " << datagram.recvlen << " bytes." << std::endl;
-    std::cout << "fileSize = " << req->fileSize << std::endl;
-    std::cout << "OTI_COMMON = " << req->commonData << std::endl;
-    std::cout << "OTI_SCHEME_SPECIFIC = " << req->schemeSpecificData << std::endl;
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
 
-    /* initialize decoder */
-    RaptorQ::Decoder<typename std::vector<Alignment>::iterator,
-            typename std::vector<Alignment>::iterator>
-            decoder(req->commonData, req->schemeSpecificData);
+    Buffer sendBuffer;
+    sendBuffer.emplaceAppend<WireFormat::HandshakeResp>(req->connectionId);
+    udpSocket->sendbytesto(senderAddr, sendBuffer.c_str(), sendBuffer.size());
 
-    /* send back HandshakeResp */
-    payload.clear();
-    WireFormat::HandshakeResp* resp = payload.emplaceAppend<WireFormat::HandshakeResp>();
-    std::memcpy(resp->addr, local_addr.ip().c_str(), local_addr.ip().length());
-    resp->port = local_addr.port();
-    udp_socket.sendbytesto(senderAddr, payload.c_str(), payload.size());
+    // Start receiving symbols
+    RaptorQSymbol symbol(NUM_ALIGN_PER_SYMBOL, 0);
 
-    /* start receiving symbols */
-    size_t numOfAlignPerSymbol = static_cast<size_t>(
-            std::ceil(static_cast<float>(decoder.symbol_size()) / sizeof(Alignment)));
-    std::vector<Alignment> symbol;
-    symbol.reserve(numOfAlignPerSymbol);
-    symbol.insert(symbol.begin(), numOfAlignPerSymbol, 0);
+    std::vector<std::vector<Alignment>> blocks(decoder.blocks());
+//    for (auto& block : blocks) {
+//        block.insert(block.begin(), )
+//    }
 
-    std::vector<std::vector<Alignment>> blocks;
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
-        blocks.emplace_back();
-        std::vector<Alignment>& block = blocks[sbn];
         int numAlignPerBlock = decoder.block_size(sbn) / sizeof(Alignment);
-        block.reserve(numAlignPerBlock);
-        block.insert(block.begin(), numAlignPerBlock, 0);
+        blocks[sbn].insert(blocks[sbn].begin(), numAlignPerBlock, 0);
     }
-    uint8_t numDecodedBlocks = 0;
-    while (numDecodedBlocks < decoder.blocks()) {
-        datagram = udp_socket.recv();
-        assert(datagram.source_address == senderAddr);
-        uint32_t id = *reinterpret_cast<uint32_t*>(datagram.payload);
-        uint8_t sbn = id >> 24;
-        std::cout << "Received sbn = " << static_cast<int>(sbn) << ", esi = " << ((id << 8) >> 8) << std::endl;
-        for (size_t i = 0; i < numOfAlignPerSymbol; i++) {
-            symbol[i] = *(reinterpret_cast<Alignment*>(datagram.payload) + i);
-        }
+
+    Bitmask256 decodedBlocks;
+    while (decodedBlocks.count() < decoder.blocks()) {
+        datagram = udpSocket->recv();
+        recvBuffer.set(datagram.payload, datagram.recvlen);
+        const WireFormat::DataPacket* dataPacket =
+                recvBuffer.get<WireFormat::DataPacket>(0);
+        uint8_t sbn = dataPacket->id >> 24;
+        printf("Received sbn = %u, esi = %u\n",
+               static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
+        std::memcpy(symbol.data(), dataPacket->raw, SYMBOL_SIZE);
+
         auto begin = symbol.begin();
-        decoder.add_symbol(begin, symbol.end(), id);
+        decoder.add_symbol(begin, symbol.end(), dataPacket->id);
 
         auto begin2 = blocks[sbn].begin();
         if (decoder.decode(begin2, blocks[sbn].end(), sbn) > 0) {
-            /* send ACK for block sbn */
+            // send ACK for block sbn
             std::cout << "Block " << static_cast<int>(sbn) << " decoded" << std::endl;
-            numDecodedBlocks++;
-            payload.clear();
-            WireFormat::Ack* ack = payload.emplaceAppend<WireFormat::Ack>();
-            (*ack) = {0, 0, 0, 0};
-            ack->mask[sbn / 64] = 1 << (sbn % 64);
-            udp_socket.sendbytesto(senderAddr, payload.c_str(), payload.size());
+            decodedBlocks.set(sbn);
+            sendBuffer.clear();
+            sendBuffer.emplaceAppend<WireFormat::Ack>(decodedBlocks.bitset);
+            udpSocket->sendbytesto(senderAddr, sendBuffer.c_str(), sendBuffer.size());
         }
     }
 
+    // TODO: Temporary hack to avoid "recvmsg: connection refused" on the sender side
+    usleep(1000000);
     return EXIT_SUCCESS;
 }

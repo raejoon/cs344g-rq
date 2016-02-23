@@ -13,6 +13,7 @@
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
+#include <fcntl.h>
 
 #include "buffer.hh"
 #include "common.hh"
@@ -55,7 +56,150 @@ size_t readFile(std::string filename, std::vector<Alignment>& content)
     return static_cast<size_t>(filesz);
 }
 
-int main( int argc, char *argv[] )
+/**
+ * Starts the handshake procedure with the receiver. This method needs to
+ * handle retries automatically in the face of lost handshake request and/or
+ * response.
+ * TODO: implement retry strategy to counteract lost request/response.
+ *
+ * \return
+ *      A reference to a non-blocking UDP socket if the handshake procedure
+ *      succeeds; nullptr otherwise.
+ */
+template<typename Alignment>
+std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
+                                             const std::string& host,
+                                             const std::string& port,
+                                             const FileWrapper<Alignment>& file)
+{
+    Buffer sendBuffer;
+    uint32_t connectionId = generateRandom();
+    sendBuffer.emplaceAppend<WireFormat::HandshakeReq>(
+            connectionId, file.size(), encoder.OTI_Common(),
+            encoder.OTI_Scheme_Specific());
+
+    std::unique_ptr<UDPSocket> udpSocket {new UDPSocket};
+    udpSocket->connect(Address(host, port));
+
+    // Send handshake request
+    printf("Sending handshake request: {connection Id = %u, file size = %zu, "
+           "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           connectionId, file.size(), encoder.OTI_Common(),
+           encoder.OTI_Scheme_Specific());
+    udpSocket->sendbytes(sendBuffer.c_str(), sendBuffer.size());
+
+    // Wait for handshake response
+    UDPSocket::received_datagram recvDatagram = udpSocket->recv();
+    Buffer recvBuffer(recvDatagram.payload, recvDatagram.recvlen);
+    const WireFormat::HandshakeResp* resp =
+            recvBuffer.get<WireFormat::HandshakeResp>(0);
+    if (connectionId == resp->connectionId) {
+        printf("Received handshake response: {connectionId = %u}\n",
+               resp->connectionId);
+
+        // Set the socket to be non-blocking to support polling
+        fcntl(udpSocket->fd_num(), F_SETFL, O_NONBLOCK);
+        return udpSocket;
+    }
+
+    return nullptr;
+}
+
+/**
+ * Invokes congestion control algorithm.
+ *
+ * This method is now called before sending each symbol and blocks until the
+ * congestion controller says it's OK to send. This is subject to change.
+ */
+void congestionControl() {
+    // TODO(Francis): implement congestion control logic here
+    // Sleep-based congestion control :p
+    usleep(10000);
+}
+
+void transmit(RaptorQEncoder& encoder,
+              UDPSocket* udpSocket)
+{
+    // Send encoded symbols in a round-robin fashion
+    std::vector<RaptorQSymbolIterator> iters, ends;
+    for (const auto& block : encoder) {
+        iters.push_back(block.begin_source());
+        ends.push_back(block.end_source());
+    }
+
+    // Represents blocks that are decoded by the receiver
+    Bitmask256 decodedBlocks;
+
+    RaptorQSymbol symbol(NUM_ALIGN_PER_SYMBOL, 0);
+    Buffer sendBuffer;
+    Buffer recvBuffer;
+
+    uint32_t round = 0;
+    const uint32_t MAX_ROUND = (encoder.block_size(0) / MAX_SYM_PER_BLOCK) * 2;
+    while (decodedBlocks.count() < encoder.blocks()) {
+        if (round++ > MAX_ROUND) {
+            printf("Error: we have sent way too many symbols\n");
+            exit(EXIT_SUCCESS);
+        }
+
+        uint8_t sbn = 0;
+        for (const auto& block : encoder) {
+            // Check if this block has been successfully decoded by the receiver
+            if (decodedBlocks.test(sbn)) {
+                continue;
+            }
+
+            // If we have sent at least K symbols for this block, poll to see
+            // if the receiver has acknowledged the block
+            if (round >= block.symbols()) {
+                std::cout << "Polling... Round = " << round << std::endl;
+                try {
+                    UDPSocket::received_datagram recvDatagram = udpSocket->recv();
+                    recvBuffer.set(recvDatagram.payload, recvDatagram.recvlen);
+                    decodedBlocks.bitwiseOr(Bitmask256(
+                            recvBuffer.get<WireFormat::Ack>(0)->bitmask));
+                    printf("Received ACK\n");
+                    // TODO: print out the newly ack'ed blocks?
+                } catch (const unix_error& e) {
+                    if (e.code().value() != EAGAIN) {
+                        printf("%s\n", e.what());
+                    }
+                }
+            }
+
+            // Switch to repair symbol if we have drained the source symbols
+            RaptorQSymbolIterator* pSymbolIter = iters.data() + sbn;
+            RaptorQSymbolIterator* pEndOfSymbols = ends.data() + sbn;
+            if (*pSymbolIter == *pEndOfSymbols) {
+                // This code is unfortunately pretty complex because
+                // RaptorQ::Symbol_Iterator doesn't seem to be CopyAssignable
+                // (it is CopyConstrutible though...)
+                pSymbolIter->~RaptorQSymbolIterator();
+                pEndOfSymbols->~RaptorQSymbolIterator();
+                new (pSymbolIter) RaptorQSymbolIterator(block.begin_repair());
+                new (pEndOfSymbols) RaptorQSymbolIterator(block.end_repair(
+                        block.max_repair()));
+            }
+
+            RaptorQSymbolIterator& symbolIter = *pSymbolIter;
+            auto begin = symbol.begin();
+            (*symbolIter)(begin, symbol.end());
+
+            // Convert symbol to binary blob
+            sendBuffer.clear();
+            sendBuffer.emplaceAppend<WireFormat::DataPacket>(
+                    (*symbolIter).id(), symbol.data());
+
+            // Wait until the congestion controller gives us a pass
+            congestionControl();
+            udpSocket->sendbytes(sendBuffer.c_str(), sendBuffer.size());
+            ++symbolIter;
+            sbn++;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
 {
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
@@ -64,103 +208,41 @@ int main( int argc, char *argv[] )
         std::cerr << "Usage: " << argv[ 0 ] << " HOST PORT FILE" << std::endl;
         return EXIT_FAILURE;
     }
-
-    /* read file */
-    std::vector<Alignment> dataToSend;
-    size_t fileSize = readFile(argv[3], dataToSend);
-
-    /* setting parameters */
-    const uint16_t subSymbolSize = 1 << 13;
-    const uint16_t symbolSize = subSymbolSize;
-    const uint32_t numSymPerBlock = 100;
-    RaptorQ::Encoder<typename std::vector<Alignment>::iterator,
-            typename std::vector<Alignment>::iterator>
-            encoder(dataToSend.begin(),
-                    dataToSend.end(),
-                    subSymbolSize,
-                    symbolSize,
-                    numSymPerBlock * symbolSize);
-
-    // TODO: have two Buffers, one for sending, one for receiving?
-    Buffer payload;
-    WireFormat::HandshakeReq* p = payload.emplaceAppend<WireFormat::HandshakeReq>();
-    p->fileSize = fileSize;
-    p->commonData = encoder.OTI_Common();
-    p->schemeSpecificData = encoder.OTI_Scheme_Specific();
-
     /* fetch command-line arguments */
     const std::string host { argv[ 1 ] }, port { argv[ 2 ] };
 
-    /* construct UDP socket */
-    UDPSocket udp_socket;
+    // Read the file to transfer
+    // TODO: modify readFile to return the FileWrapper directly
+    std::vector<Alignment> dataToSend;
+    size_t fileSize = readFile(argv[3], dataToSend);
+    FileWrapper<Alignment> file {fileSize, dataToSend};
 
-    /* connect the socket to the given host and port */
-    udp_socket.connect(Address(host, port));
+    // Setup parameters of the RaptorQ protocol
+    RaptorQEncoder encoder(file.begin(),
+                           file.end(),
+                           SYMBOL_SIZE, /* no interleaving */
+                           SYMBOL_SIZE,
+                           MAX_DECODABLE_BLOCK_SIZE);
 
-    /* send handshake req */
-    std::cout << "Sending " << payload.size() << " bytes." << std::endl;
-    std::cout << "fileSize = " << fileSize << std::endl;
-    std::cout << "OTI_COMMON = " << encoder.OTI_Common() << std::endl;
-    std::cout << "OTI_SCHEME_SPECIFIC = " << encoder.OTI_Scheme_Specific() << std::endl;
-    udp_socket.sendbytes(payload.c_str(), payload.size());
-
-    /* precompute intermediate symbols */
+    // Precompute intermediate symbols in background
+    // TODO: turn on asynchronous and parallel precomputation
+    // TODO: how do I check if the precomputation is doen?
+//    encoder.precompute(std::max(std::thread::hardware_concurrency(), 1), true);
     encoder.precompute(1, false);
 
-    /* receive handshake ack */
-    UDPSocket::received_datagram handshakeAck = udp_socket.recv();
-    Buffer buffer(handshakeAck.payload, handshakeAck.recvlen);
-    const WireFormat::HandshakeResp* resp = buffer.get<WireFormat::HandshakeResp>(0);
-    std::cout << "Received handshake ack: ip = " << std::string(resp->addr)
-              << " port = " << resp->port << std::endl;
-
-    /* start sending encoding symbols in a round-robin fashion */
-    using SYM_ITER = decltype((*encoder.begin()).begin_source());
-    std::vector<std::pair<SYM_ITER, SYM_ITER>> symIters;
-    for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
-        auto block = *encoder.begin().operator++(sbn);
-        symIters.emplace_back(block.begin_source(), block.end_source());
+    // Initiate handshake process
+    std::unique_ptr<UDPSocket> udpSocket = initiateHandshake(
+            encoder, host, port, file);
+    if (!udpSocket) {
+        printf("Handshake failure!\n");
+        return EXIT_SUCCESS;
     }
 
-    size_t numOfAlignPerSymbol = static_cast<size_t>(
-            std::ceil(static_cast<float>(symbolSize) / sizeof(Alignment)));
-    std::vector<Alignment> symbol;
-    symbol.reserve(numOfAlignPerSymbol);
-    symbol.insert(symbol.begin(), numOfAlignPerSymbol, 0);
+    // Start tranmission
+    transmit(encoder, udpSocket.get());
 
-    // TODO: change to while-loop and properly check ack
-    for (uint16_t esi = 0; esi < 999; esi++) {
-        if (esi >= encoder.begin().operator*().symbols()) {
-            break;
-        }
-
-//    while (true) {
-        for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
-            usleep(10000);
-            // TODO: check if this block has been successfully decoded by receiver
-
-            /* Switch to repair symbol if we have drained the source symbols */
-            if (symIters[sbn].first == symIters[sbn].second) {
-                auto block = *encoder.begin().operator++(sbn);
-                new (&symIters[sbn].first) SYM_ITER(block.begin_repair());
-                new (&symIters[sbn].second) SYM_ITER(block.end_repair(
-                        block.max_repair()));
-            }
-
-            auto& symIter = symIters[sbn].first;
-            // TODO: extract a getSymbol method
-            auto begin = symbol.begin();
-            (*symIter)(begin, symbol.end());
-            /* convert symbol to binary blob */
-            payload.clear();
-            *payload.append<uint32_t>() = (*symIter).id();
-            for (Alignment al : symbol) {
-                *payload.append<Alignment>() = al;
-            }
-            udp_socket.sendbytes(payload.c_str(), payload.size());
-            ++symIter;
-        }
-    }
+    // Tear down connection
+    // TODO
 
     return EXIT_SUCCESS;
 }
