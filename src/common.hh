@@ -3,6 +3,8 @@
 
 #include <bitset>
 
+#include "socket.hh"
+
 /**
  * TODO: confirm it?
  * The recommended setting of parameter Al in rfc6330 is 32.
@@ -59,6 +61,19 @@ generateRandom()
 {
     std::srand(std::time(0));
     return std::rand();
+}
+
+/**
+ * TODO
+ */
+template<typename T, typename... Args>
+void sendInWireFormat(UDPSocket* udpSocket,
+                      const Address& dest,
+                      Args&&... args)
+{
+    char raw[sizeof(T)];
+    new(raw) T(static_cast<Args&&>(args)...);
+    udpSocket->sendbytesto(dest, raw, sizeof(T));
 }
 
 /**

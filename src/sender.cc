@@ -1,21 +1,9 @@
-/*
-  udp-sender
-
-  Given a host and port on the command line,
-  this program should:
-
-  (1) Construct a UDP socket
-  (2) Connect the socket to the given host and port
-  (3) Use the socket to send a payload of the
-      string: "Hello, world."
-*/
-
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
 #include <fcntl.h>
 
-#include "buffer.hh"
+#include "tub.hh"
 #include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
@@ -72,27 +60,26 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
                                              const std::string& port,
                                              const FileWrapper<Alignment>& file)
 {
-    Buffer sendBuffer;
-    uint32_t connectionId = generateRandom();
-    sendBuffer.emplaceAppend<WireFormat::HandshakeReq>(
-            connectionId, file.size(), encoder.OTI_Common(),
-            encoder.OTI_Scheme_Specific());
-
     std::unique_ptr<UDPSocket> udpSocket {new UDPSocket};
     udpSocket->connect(Address(host, port));
 
     // Send handshake request
+    uint32_t connectionId = generateRandom();
+    sendInWireFormat<WireFormat::HandshakeReq>(
+            udpSocket.get(), udpSocket->peer_address(),
+            connectionId, file.size(), encoder.OTI_Common(),
+            encoder.OTI_Scheme_Specific());
     printf("Sending handshake request: {connection Id = %u, file size = %zu, "
-           "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+                   "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
            connectionId, file.size(), encoder.OTI_Common(),
            encoder.OTI_Scheme_Specific());
-    udpSocket->sendbytes(sendBuffer.c_str(), sendBuffer.size());
 
     // Wait for handshake response
     UDPSocket::received_datagram recvDatagram = udpSocket->recv();
-    Buffer recvBuffer(recvDatagram.payload, recvDatagram.recvlen);
-    const WireFormat::HandshakeResp* resp =
-            recvBuffer.get<WireFormat::HandshakeResp>(0);
+    Tub<WireFormat::HandshakeResp> resp(recvDatagram.payload);
+    // TODO: the right thing to do after receiving a datagram is to check
+    // the opcode first
+//    assert(resp.size() == recvDatagram.recvlen);
     if (connectionId == resp->connectionId) {
         printf("Received handshake response: {connectionId = %u}\n",
                resp->connectionId);
@@ -131,8 +118,6 @@ void transmit(RaptorQEncoder& encoder,
     Bitmask256 decodedBlocks;
 
     RaptorQSymbol symbol {0};
-    Buffer sendBuffer;
-    Buffer recvBuffer;
 
     uint32_t round = 0;
     const uint32_t MAX_ROUND = MAX_SYM_PER_BLOCK * 2;
@@ -156,9 +141,8 @@ void transmit(RaptorQEncoder& encoder,
             if (round >= block.symbols()) {
                 try {
                     UDPSocket::received_datagram recvDatagram = udpSocket->recv();
-                    recvBuffer.set(recvDatagram.payload, recvDatagram.recvlen);
-                    decodedBlocks.bitwiseOr(Bitmask256(
-                            recvBuffer.get<WireFormat::Ack>(0)->bitmask));
+                    Tub<WireFormat::Ack> ack(recvDatagram.payload);
+                    decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
                     printf("Received ACK\n");
                     // TODO: print out the newly ack'ed blocks?
                 } catch (const unix_error& e) {
@@ -186,14 +170,10 @@ void transmit(RaptorQEncoder& encoder,
             auto begin = symbol.begin();
             (*symbolIter)(begin, symbol.end());
 
-            // Convert symbol to binary blob
-            sendBuffer.clear();
-            sendBuffer.emplaceAppend<WireFormat::DataPacket>(
-                    (*symbolIter).id(), symbol.data());
-
             // Wait until the congestion controller gives us a pass
             congestionControl();
-            udpSocket->sendbytes(sendBuffer.c_str(), sendBuffer.size());
+            sendInWireFormat<WireFormat::DataPacket>(udpSocket,
+                    udpSocket->peer_address(), (*symbolIter).id(), symbol.data());
             ++symbolIter;
         }
     }

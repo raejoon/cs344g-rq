@@ -11,7 +11,7 @@ find_library(RAPTORQ_LIBRARY RaptorQ /usr/local/lib/)
 set(SOURCE_FILES
     src/address.cc
     src/address.hh
-    src/buffer.hh
+    src/tub.hh
     src/common.hh
     src/file_descriptor.cc
     src/file_descriptor.hh

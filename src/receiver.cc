@@ -1,7 +1,7 @@
 #include <iostream>
 #include <RaptorQ.hpp>
 
-#include "buffer.hh"
+#include "tub.hh"
 #include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
@@ -23,33 +23,26 @@ int main( int argc, char *argv[] )
 
     UDPSocket::received_datagram datagram = udpSocket->recv();
     Address senderAddr = datagram.source_address;
-    Buffer recvBuffer(datagram.payload, datagram.recvlen);
-    const WireFormat::HandshakeReq* req = recvBuffer.get<WireFormat::HandshakeReq>(0);
-    printf("Sending handshake request: {connection Id = %u, file size = %zu, "
+    Tub<WireFormat::HandshakeReq> req(datagram.payload);
+    printf("Recevied handshake request: {connection Id = %u, file size = %zu, "
                    "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
            req->connectionId, req->fileSize, req->otiCommon, req->otiScheme);
-
-    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
-
-    Buffer sendBuffer;
-    sendBuffer.emplaceAppend<WireFormat::HandshakeResp>(req->connectionId);
-    udpSocket->sendbytesto(senderAddr, sendBuffer.c_str(), sendBuffer.size());
+    sendInWireFormat<WireFormat::HandshakeResp>(
+            udpSocket.get(), senderAddr, uint32_t(req->connectionId));
 
     // Start receiving symbols
-    RaptorQSymbol symbol {0};
-
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
     std::vector<RaptorQBlock> blocks(decoder.blocks());
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
         blocks[sbn] = RaptorQBlock(
                 decoder.block_size(sbn) / sizeof(Alignment), 0);
     }
 
+    RaptorQSymbol symbol {0};
     Bitmask256 decodedBlocks;
     while (decodedBlocks.count() < decoder.blocks()) {
         datagram = udpSocket->recv();
-        recvBuffer.set(datagram.payload, datagram.recvlen);
-        const WireFormat::DataPacket* dataPacket =
-                recvBuffer.get<WireFormat::DataPacket>(0);
+        Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
         uint8_t sbn = dataPacket->id >> 24;
         printf("Received sbn = %u, esi = %u\n",
                static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
@@ -63,11 +56,18 @@ int main( int argc, char *argv[] )
             // send ACK for block sbn
             printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
-            sendBuffer.clear();
-            sendBuffer.emplaceAppend<WireFormat::Ack>(decodedBlocks.bitset);
-            udpSocket->sendbytesto(senderAddr, sendBuffer.c_str(), sendBuffer.size());
+            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
+                    decodedBlocks.bitset);
         }
     }
+
+    // Start teardown phase: keep sending ACK back until we receive
+    // teardown request
+    assert(decodedBlocks.count() == decoder.blocks());
+//    while (true) {
+//        sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
+//                 decodedBlocks.bitset);
+//    }
 
     // TODO: Temporary hack to avoid "recvmsg: connection refused" on the sender side
     usleep(1000000);
