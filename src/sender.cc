@@ -112,13 +112,15 @@ void transmit(RaptorQEncoder& encoder,
     for (const auto& block : encoder) {
         iters.push_back(block.begin_source());
         ends.push_back(block.end_source());
+        // The following code tests recovering entirely from repair symbols.
+//        iters.push_back(block.begin_repair());
+//        ends.push_back(block.end_repair(block.max_repair()));
     }
 
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
 
     RaptorQSymbol symbol {0};
-
     uint32_t round = 0;
     const uint32_t MAX_ROUND = MAX_SYM_PER_BLOCK * 2;
     while (decodedBlocks.count() < encoder.blocks()) {
@@ -196,6 +198,7 @@ int main(int argc, char *argv[])
     std::vector<Alignment> dataToSend;
     size_t fileSize = readFile(argv[3], dataToSend);
     FileWrapper<Alignment> file {fileSize, dataToSend};
+    printf("Done reading file\n");
 
     // Setup parameters of the RaptorQ protocol
     RaptorQEncoder encoder(file.begin(),
@@ -205,10 +208,9 @@ int main(int argc, char *argv[])
                            MAX_DECODABLE_BLOCK_SIZE);
 
     // Precompute intermediate symbols in background
-    // TODO: turn on asynchronous and parallel precomputation
-    // TODO: how do I check if the precomputation is doen?
+    // TODO: is one dedicated thread for precomputation enough?
 //    encoder.precompute(std::max(std::thread::hardware_concurrency(), 1), true);
-    encoder.precompute(1, false);
+    encoder.precompute(1, true);
 
     // Initiate handshake process
     std::unique_ptr<UDPSocket> udpSocket = initiateHandshake(

@@ -14,6 +14,10 @@ public:
         std::memcpy(raw, data, sizeof(T));
     }
 
+    ~Tub() {
+        get()->~T();
+    }
+
     T* get() {
         return reinterpret_cast<T*>(raw);
     }

@@ -46,6 +46,10 @@ int main( int argc, char *argv[] )
         uint8_t sbn = dataPacket->id >> 24;
         printf("Received sbn = %u, esi = %u\n",
                static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
+
+        if (decodedBlocks.test(sbn)) {
+            continue;
+        }
         std::memcpy(symbol.data(), dataPacket->raw, SYMBOL_SIZE);
 
         Alignment* begin = symbol.begin();
