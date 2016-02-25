@@ -2,6 +2,9 @@
 #define COMMON_HH
 
 #include <bitset>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "socket.hh"
 
@@ -33,13 +36,18 @@ constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / sizeof(Alignment);
 
 typedef std::array<Alignment, NUM_ALIGN_PER_SYMBOL> RaptorQSymbol;
 
-typedef std::vector<Alignment> RaptorQBlock;
-
 typedef RaptorQ::Encoder<Alignment*, Alignment*> RaptorQEncoder;
 
 typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
+
+// A macro to disallow the copy constructor and operator= functions
+#ifndef DISALLOW_COPY_AND_ASSIGN
+#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
+    TypeName(const TypeName&) = delete;             \
+    TypeName& operator=(const TypeName&) = delete;
+#endif
 
 /**
  * Cast one size of int down to another one.
@@ -61,6 +69,10 @@ generateRandom()
 {
     std::srand(std::time(0));
     return std::rand();
+}
+
+size_t getPaddedSize(size_t size) {
+    return size + size % sizeof(Alignment);
 }
 
 /**
@@ -132,22 +144,36 @@ struct Bitmask256 {
 template<typename Alignment>
 class FileWrapper {
   public:
-    // TODO: revise this constructor?
-    FileWrapper(size_t size, std::vector<Alignment> data)
-        : fileSize(size)
-        , data(std::move(data))
+    FileWrapper(const char* filename)
+        : fd(open(filename, O_RDONLY))
+        , fileSize(getFileSize(filename))
+        , paddedSize(getPaddedSize(fileSize))
+        , start(reinterpret_cast<Alignment*>(
+                    mmap(NULL, paddedSize, PROT_READ, MAP_PRIVATE, fd, 0)))
     {}
+
+    ~FileWrapper()
+    {
+        if (isOpen()) {
+            munmap(start, paddedSize);
+        }
+    }
+
+    bool isOpen() const
+    {
+        return start != MAP_FAILED;
+    }
 
     Alignment*
     begin()
     {
-        return data.data();
+        return start;
     }
 
     Alignment*
     end()
     {
-        return data.data() + data.size();
+        return start + paddedSize / sizeof(Alignment);
     }
 
     size_t size() const
@@ -156,16 +182,29 @@ class FileWrapper {
     }
 
   private:
+
+    static size_t
+    getFileSize(const char* filename) {
+        struct stat statBuf;
+        stat(filename, &statBuf);
+        return statBuf.st_size;
+    }
+
+    int fd;
+
     /**
      * The size of the file in number of bytes.
      */
-    const size_t fileSize;
+    size_t fileSize;
 
     /**
-     * TODO: change it to an iterator or something s.t. we don't have to put
-     * the whole file in vector.
+     * The size of the file after padding.
      */
-    std::vector<Alignment> data;
+    size_t paddedSize;
+
+    Alignment* start;
+
+    DISALLOW_COPY_AND_ASSIGN(FileWrapper)
 };
 
 #endif /* COMMON_HH */

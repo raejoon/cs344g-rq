@@ -1,48 +1,11 @@
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
-#include <fcntl.h>
 
 #include "tub.hh"
 #include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
-
-template<typename Alignment>
-size_t readFile(std::string filename, std::vector<Alignment>& content)
-{
-    std::ifstream infile;
-    infile.open(filename, std::ios::in | std::ios::binary);
-    infile.unsetf(std::ios::skipws);
-
-    std::streampos filesz;
-    infile.seekg(0, std::ios::end);
-    filesz = infile.tellg();
-    infile.seekg(0, std::ios::beg);
-
-    size_t dataLength = static_cast<size_t>(
-            std::ceil(static_cast<float>(filesz) / sizeof(Alignment)));
-    content.reserve(dataLength);
-
-    std::istreambuf_iterator<char> it(infile);
-    std::istreambuf_iterator<char> eos;
-
-    uint8_t shift = 0;
-    Alignment tmp = 0;
-    while (it != eos) {
-        tmp += static_cast<uint8_t>(*it) << (shift * 8);
-        shift++;
-        if (shift >= sizeof(Alignment)) {
-            content.push_back(tmp);
-            shift = 0;
-            tmp = 0;
-        }
-        it++;
-    }
-    if (shift != 0) content.push_back(tmp);
-
-    return static_cast<size_t>(filesz);
-}
 
 /**
  * Starts the handshake procedure with the receiver. This method needs to
@@ -195,9 +158,7 @@ int main(int argc, char *argv[])
 
     // Read the file to transfer
     // TODO: modify readFile to return the FileWrapper directly
-    std::vector<Alignment> dataToSend;
-    size_t fileSize = readFile(argv[3], dataToSend);
-    FileWrapper<Alignment> file {fileSize, dataToSend};
+    FileWrapper<Alignment> file {argv[3]};
     printf("Done reading file\n");
 
     // Setup parameters of the RaptorQ protocol
