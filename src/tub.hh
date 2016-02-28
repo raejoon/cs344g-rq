@@ -9,17 +9,35 @@ template<typename T>
 class Tub
 {
 public:
+    Tub() : occupied(false) {}
+
     Tub(char* data)
+        : occupied(true)
     {
         std::memcpy(raw, data, sizeof(T));
     }
 
     ~Tub() {
-        get()->~T();
+        destroy();
+    }
+
+    template<typename... Args>
+    T* construct(Args&&... args) {
+        destroy();
+        new(raw) T(static_cast<Args&&>(args)...);
+        occupied = true;
+        return get();
+    }
+
+    void destroy() {
+        if (occupied) {
+            get()->~T();
+            occupied = false;
+        }
     }
 
     T* get() {
-        return reinterpret_cast<T*>(raw);
+        return occupied ? reinterpret_cast<T*>(raw) : nullptr;
     }
 
     T*
@@ -32,6 +50,8 @@ public:
     }
 
 private:
+    bool occupied;
+
     char raw[sizeof(T)];
 
 };

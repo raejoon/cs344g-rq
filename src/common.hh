@@ -75,6 +75,19 @@ size_t getPaddedSize(size_t size) {
     return size + size % sizeof(Alignment);
 }
 
+bool poll(UDPSocket* udpSocket, UDPSocket::received_datagram& datagram)
+{
+    try {
+        datagram = udpSocket->recv();
+        return true;
+    } catch (const unix_error &e) {
+        if (e.code().value() != EAGAIN) {
+            printf("%s\n", e.what());
+        }
+        return false;
+    }
+}
+
 /**
  * TODO
  */

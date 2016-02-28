@@ -85,7 +85,8 @@ void transmit(RaptorQEncoder& encoder,
 
     RaptorQSymbol symbol {0};
     uint32_t round = 0;
-    const uint32_t MAX_ROUND = MAX_SYM_PER_BLOCK * 2;
+    const static uint32_t MAX_ROUND = MAX_SYM_PER_BLOCK * 2;
+    UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
     while (decodedBlocks.count() < encoder.blocks()) {
         if (round++ > MAX_ROUND) {
             printf("Error: we have sent way too many symbols; round = %u\n",
@@ -104,16 +105,10 @@ void transmit(RaptorQEncoder& encoder,
             // If we have sent at least K symbols for this block, poll to see
             // if the receiver has acknowledged the block
             if (round >= block.symbols()) {
-                try {
-                    UDPSocket::received_datagram recvDatagram = udpSocket->recv();
-                    Tub<WireFormat::Ack> ack(recvDatagram.payload);
+                if (poll(udpSocket, datagram)) {
+                    Tub<WireFormat::Ack> ack(datagram.payload);
                     decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
                     printf("Received ACK\n");
-                    // TODO: print out the newly ack'ed blocks?
-                } catch (const unix_error& e) {
-                    if (e.code().value() != EAGAIN) {
-                        printf("%s\n", e.what());
-                    }
                 }
             }
 
@@ -183,9 +178,6 @@ int main(int argc, char *argv[])
 
     // Start transmission
     transmit(encoder, udpSocket.get());
-
-    // Tear down connection
-    // TODO
 
     return EXIT_SUCCESS;
 }

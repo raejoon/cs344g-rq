@@ -1,3 +1,5 @@
+
+#include <chrono>
 #include <iostream>
 #include <RaptorQ.hpp>
 
@@ -5,6 +7,12 @@
 #include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
+
+const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
+        std::chrono::milliseconds(500);
+
+const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
+        2 * HEART_BEAT_INTERVAL;
 
 int main( int argc, char *argv[] )
 {
@@ -52,7 +60,8 @@ int main( int argc, char *argv[] )
                 decoder.block_size(sbn) / sizeof(Alignment);
     }
 
-    RaptorQSymbol symbol {0};
+    std::chrono::time_point<std::chrono::system_clock> nextAckTime =
+            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     Bitmask256 decodedBlocks;
     while (decodedBlocks.count() < decoder.blocks()) {
         datagram = udpSocket->recv();
@@ -61,21 +70,28 @@ int main( int argc, char *argv[] )
         printf("Received sbn = %u, esi = %u\n",
                static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
 
+        auto currTime = std::chrono::system_clock::now();
+        if (currTime > nextAckTime) {
+            printf("Sent Heartbeat ACK\n");
+            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
+                                              decodedBlocks.bitset);
+            nextAckTime = currTime + HEART_BEAT_INTERVAL;
+        }
+
         if (decodedBlocks.test(sbn)) {
             continue;
         }
-        std::memcpy(symbol.data(), dataPacket->raw, SYMBOL_SIZE);
 
-        Alignment* begin = symbol.begin();
-        decoder.add_symbol(begin, symbol.end(), dataPacket->id);
+        Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
+        decoder.add_symbol(begin,
+                reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
+                dataPacket->id);
 
         begin = blockStart[sbn];
         if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
             // send ACK for block sbn
             printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
-            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
-                    decodedBlocks.bitset);
         }
     }
     SystemCall("msync", msync(start, paddedSize, MS_SYNC));
@@ -84,15 +100,30 @@ int main( int argc, char *argv[] )
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
 
-    // Start teardown phase: keep sending ACK back until we receive
-    // teardown request
     assert(decodedBlocks.count() == decoder.blocks());
-//    while (true) {
-//        sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
-//                 decodedBlocks.bitset);
-//    }
+    printf("File decoded successfully.\n");
 
-    // TODO: Temporary hack to avoid "recvmsg: connection refused" on the sender side
-    usleep(1000000);
+    // Teardown phase: keep sending ACK until we do not get any packet from
+    // the sender for a while
+
+    // Clean up the udp socket recv buffer first
+    fcntl(udpSocket->fd_num(), F_SETFL, O_NONBLOCK);
+    while (poll(udpSocket.get(), datagram)) { }
+    std::chrono::time_point<std::chrono::system_clock> stopTime =
+            std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
+    while (true) {
+        if (poll(udpSocket.get(), datagram)) {
+            stopTime = std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
+        }
+
+        if (std::chrono::system_clock::now() < stopTime) {
+            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
+                                              decodedBlocks.bitset);
+            std::this_thread::sleep_for(HEART_BEAT_INTERVAL);
+        } else {
+            break;
+        }
+    }
+
     return EXIT_SUCCESS;
 }
