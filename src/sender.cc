@@ -67,74 +67,82 @@ void congestionControl() {
     usleep(10000);
 }
 
+/**
+ * Send a single symbol to the given UDP socket.
+ *
+ * \param[in]
+ *      The UDP socket.
+ * \param[in,out] symbolIterator
+ *      A symbol iterator referencing the symbol about to send; the position
+ *      of the iterator will be advanced by one after this function is called.
+ */
+void sendSymbol(UDPSocket *udpSocket,
+                RaptorQSymbolIterator &symbolIterator)
+{
+    static RaptorQSymbol symbol {0};
+    auto begin = symbol.begin();
+    (*symbolIterator)(begin, symbol.end());
+
+    // Wait until the congestion controller gives us a pass
+    congestionControl();
+    sendInWireFormat<WireFormat::DataPacket>(udpSocket,
+            udpSocket->peer_address(), (*symbolIterator).id(), symbol.data());
+    ++symbolIterator;
+}
+
 void transmit(RaptorQEncoder& encoder,
               UDPSocket* udpSocket)
 {
-    // Send encoded symbols in a round-robin fashion
-    std::vector<RaptorQSymbolIterator> iters, ends;
+    std::vector<RaptorQSymbolIterator> repairSymbolIters;
     for (const auto& block : encoder) {
-        iters.push_back(block.begin_source());
-        ends.push_back(block.end_source());
-        // The following code tests recovering entirely from repair symbols.
-//        iters.push_back(block.begin_repair());
-//        ends.push_back(block.end_repair(block.max_repair()));
+        repairSymbolIters.push_back(block.begin_repair());
     }
 
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
 
-    RaptorQSymbol symbol {0};
-    uint32_t round = 0;
-    const static uint32_t MAX_ROUND = MAX_SYM_PER_BLOCK * 2;
+//    const static uint32_t MAX_SYMBOL_SENT = MAX_SYM_PER_BLOCK * encoder.blocks() * 2;
+    const static uint32_t REPAIR_SYMBOL_SEND_INTERVAL = MAX_SYM_PER_BLOCK / 10;
+    uint32_t numSourceSymbolSent = 0;
     UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
-    while (decodedBlocks.count() < encoder.blocks()) {
-        if (round++ > MAX_ROUND) {
-            printf("Error: we have sent way too many symbols; round = %u\n",
-                   round);
-            exit(EXIT_SUCCESS);
-        }
-
-        uint8_t sbn = std::numeric_limits<uint8_t>::max();
-        for (const auto& block : encoder) {
-            // Check if this block has been successfully decoded by the receiver
-            sbn++;
-            if (decodedBlocks.test(sbn)) {
-                continue;
-            }
-
-            // If we have sent at least K symbols for this block, poll to see
-            // if the receiver has acknowledged the block
-            if (round >= block.symbols()) {
-                if (poll(udpSocket, datagram)) {
+    for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
+        const auto &block = *encoder.begin().operator++(currBlock);
+        RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
+        for (int esi = 0; esi < block.symbols(); esi++) {
+            // Send i-th source symbol of block sbn
+            sendSymbol(udpSocket, sourceSymbolIter);
+            numSourceSymbolSent++;
+            if (numSourceSymbolSent % REPAIR_SYMBOL_SEND_INTERVAL == 0) {
+                // Poll to see if any ACK arrives
+                while (poll(udpSocket, datagram)) {
                     Tub<WireFormat::Ack> ack(datagram.payload);
                     decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
                     printf("Received ACK\n");
                 }
+
+                // Send repair symbols of previous blocks
+                for (uint8_t prevBlock = 0; prevBlock < currBlock; prevBlock++) {
+                    if (!decodedBlocks.test(prevBlock)) {
+                        sendSymbol(udpSocket, repairSymbolIters[prevBlock]);
+                    }
+                }
             }
+        }
+    }
 
-            // Switch to repair symbol if we have drained the source symbols
-            RaptorQSymbolIterator* pSymbolIter = iters.data() + sbn;
-            RaptorQSymbolIterator* pEndOfSymbols = ends.data() + sbn;
-            if (*pSymbolIter == *pEndOfSymbols) {
-                // This code is unfortunately pretty complex because
-                // RaptorQ::Symbol_Iterator doesn't seem to be CopyAssignable
-                // (it is CopyConstrutible though...)
-                pSymbolIter->~RaptorQSymbolIterator();
-                pEndOfSymbols->~RaptorQSymbolIterator();
-                new (pSymbolIter) RaptorQSymbolIterator(block.begin_repair());
-                new (pEndOfSymbols) RaptorQSymbolIterator(block.end_repair(
-                        block.max_repair()));
+    while (decodedBlocks.count() < encoder.blocks()) {
+        // Send repair symbols for in round-robin
+        for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
+            if (!decodedBlocks.test(sbn)) {
+                sendSymbol(udpSocket, repairSymbolIters[sbn]);
             }
+        }
 
-            RaptorQSymbolIterator& symbolIter = *pSymbolIter;
-            auto begin = symbol.begin();
-            (*symbolIter)(begin, symbol.end());
-
-            // Wait until the congestion controller gives us a pass
-            congestionControl();
-            sendInWireFormat<WireFormat::DataPacket>(udpSocket,
-                    udpSocket->peer_address(), (*symbolIter).id(), symbol.data());
-            ++symbolIter;
+        // Poll to see if any ACK arrives
+        while (poll(udpSocket, datagram)) {
+            Tub<WireFormat::Ack> ack(datagram.payload);
+            decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+            printf("Received ACK\n");
         }
     }
 }
