@@ -15,6 +15,12 @@ struct progress_t {
   double elapsed_seconds;
   uint64_t filesize;
   uint64_t sentsize;
+  progress_t() :
+    start(std::chrono::system_clock::now()),
+    current(std::chrono::system_clock::now()),
+    elapsed_seconds(0),
+    filesize(0),
+    sentsize(0) {}
 };
 
 void initialize_progress(progress_t& progress, uint64_t filesize) {
