@@ -15,7 +15,7 @@ chomp( my $prefix = qx{dirname `which mm-link`} );
 my $tracedir = $prefix . q{/../share/mahimahi/traces};
 
 # run sender inside a link, delay shell
-my @command = qw{mm-delay 20 mm-link UPLINK DOWNLINK mm-loss uplink 0.2 -- sh -c};
+my @command = qw{mm-delay 20 mm-link UPLINK DOWNLINK --meter-uplink mm-loss uplink 0.2 -- sh -c};
 
 push @command, q{./build/sender $MAHIMAHI_BASE demo.20M};
 
