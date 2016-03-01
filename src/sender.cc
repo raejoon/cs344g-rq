@@ -107,7 +107,7 @@ void transmit(RaptorQEncoder& encoder,
     Bitmask256 decodedBlocks;
 
 //    const static uint32_t MAX_SYMBOL_SENT = MAX_SYM_PER_BLOCK * encoder.blocks() * 2;
-    const static uint32_t REPAIR_SYMBOL_SEND_INTERVAL = MAX_SYM_PER_BLOCK / 10;
+    const static uint32_t REPAIR_SYMBOL_SEND_INTERVAL = 4;//MAX_SYM_PER_BLOCK / 10;
     uint32_t numSourceSymbolSent = 0;
     UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
 
