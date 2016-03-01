@@ -1,78 +1,12 @@
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
-#include <chrono>
-#include <iomanip>
 
 #include "tub.hh"
 #include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
-
-struct progress_t {
-  std::chrono::time_point<std::chrono::system_clock> start;
-  std::chrono::time_point<std::chrono::system_clock> current;
-  double elapsed_seconds;
-  uint64_t filesize;
-  uint64_t sentsize;
-  progress_t() :
-    start(std::chrono::system_clock::now()),
-    current(std::chrono::system_clock::now()),
-    elapsed_seconds(0),
-    filesize(0),
-    sentsize(0) {}
-};
-
-void initialize_progress(progress_t& progress, uint64_t filesize) {
-  progress.filesize = filesize;
-  progress.start = std::chrono::system_clock::now();
-}
-
-void update_progress(progress_t& progress, uint64_t sentsize) {
-  progress.sentsize = sentsize;
-  progress.current = std::chrono::system_clock::now();
-  std::chrono::duration<double> diff = progress.current - progress.start;
-  progress.elapsed_seconds = diff.count();
-}
-
-void update_progressbar(progress_t& progress) {
-  float fraction = progress.sentsize/((float) progress.filesize);
-  int barwidth = 70;
-  std::cout <<"[";
-  int pos = barwidth * fraction;
-  for (int i = 0; i < barwidth; ++i) {
-    if (i < pos) std::cout << "=";
-    else if (i == pos) std::cout << ">";
-    else std::cout << " ";
-  }
-  std::cout << "] " << int(fraction * 100.0) << " % ";
-
-  int hrs = int(progress.elapsed_seconds) / 3600;
-  int mins = (int(progress.elapsed_seconds) % 3600) / 60;
-  int secs = (int(progress.elapsed_seconds)) % 60;
-  std::cout << std::setw(2) << std::setfill('0') << hrs << ":";
-  std::cout << std::setw(2) << std::setfill('0') << mins << ":";
-  std::cout << std::setw(2) << std::setfill('0') << secs << " ";
-
-  if (progress.elapsed_seconds > 1.0) {
-    double rate = progress.sentsize / progress.elapsed_seconds;
-    int leftsize = progress.filesize - progress.sentsize;
-    double remaining_seconds = leftsize / rate;
-
-    hrs = int(remaining_seconds) / 3600;
-    mins = (int(remaining_seconds) % 3600) / 60;
-    secs = (int(remaining_seconds)) % 60;
-    std::cout << "ETA: ";
-    std::cout << std::setw(2) << std::setfill('0') << hrs << ":";
-    std::cout << std::setw(2) << std::setfill('0') << mins << ":";
-    std::cout << std::setw(2) << std::setfill('0') << secs;
-  } 
-  else std::cout << "ETA: --:--:--";
-
-  std::cout << "\r";
-  std::cout.flush();
-  if (fraction >= 1.0) std::cout << std::endl;
-}
+#include "progress.hh"
 
 /**
  * Starts the handshake procedure with the receiver. This method needs to
@@ -191,7 +125,7 @@ void transmit(RaptorQEncoder& encoder,
                 while (poll(udpSocket, datagram)) {
                     Tub<WireFormat::Ack> ack(datagram.payload);
                     decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-                    printf("Received ACK\n");
+                    //printf("Received ACK\n");
                 }
 
                 // Send repair symbols of previous blocks
@@ -202,7 +136,7 @@ void transmit(RaptorQEncoder& encoder,
                 }
             }
         }
-        sentsize += 1;
+        sentsize = decodedBlocks.count();
         update_progress(progress, sentsize);
         update_progressbar(progress);
     }
@@ -219,8 +153,11 @@ void transmit(RaptorQEncoder& encoder,
         while (poll(udpSocket, datagram)) {
             Tub<WireFormat::Ack> ack(datagram.payload);
             decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-            printf("Received ACK\n");
+            //printf("Received ACK\n");
         }
+        sentsize = decodedBlocks.count();
+        update_progress(progress, sentsize);
+        update_progressbar(progress);
     }
 }
 
@@ -229,16 +166,28 @@ int main(int argc, char *argv[])
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
-    if ( argc != 4 ) {
-        std::cerr << "Usage: " << argv[ 0 ] << " HOST PORT FILE" << std::endl;
+    char *filename;
+    std::string host, port;
+
+    /* fetch command-line arguments */
+    if ( argc == 3 ) {
+        filename = argv[2];
+        host = argv[1];
+        port = "6330";
+    }
+    else if ( argc == 4 ) {
+        filename = argv[3];
+        host = argv[1];
+        port = argv[2];
+    }
+    else {
+        std::cerr << "Usage: " << argv[ 0 ] << " HOST [PORT] FILE" << std::endl;
         return EXIT_FAILURE;
     }
-    /* fetch command-line arguments */
-    const std::string host { argv[ 1 ] }, port { argv[ 2 ] };
 
     // Read the file to transfer
     // TODO: modify readFile to return the FileWrapper directly
-    FileWrapper<Alignment> file {argv[3]};
+    FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
 
     // Setup parameters of the RaptorQ protocol

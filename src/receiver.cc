@@ -26,7 +26,13 @@ int main( int argc, char *argv[] )
 
     // Wait for handshake request and send back handshake response
     std::unique_ptr<UDPSocket> udpSocket{new UDPSocket};
-    udpSocket->bind(Address("0", 0));
+    try {
+        udpSocket->bind(Address("0", 6330));
+    }
+    catch (unix_error e) {
+        std::cerr << "Port 6330 is already used. Picking a random port..." << std::endl;
+        udpSocket->bind(Address("0", 0));
+    }
     printf("%s\n", udpSocket->local_address().to_string().c_str());
 
     UDPSocket::received_datagram datagram = udpSocket->recv();
