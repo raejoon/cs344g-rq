@@ -22,15 +22,9 @@ typedef uint32_t Alignment;
 #define SYMBOL_SIZE 8192
 
 /**
- * The maximum bumber of symbols per block; the asymptotic complexity of time
- * and space are cubic and quadratic of this number respectively.
+ * The maximum number of blocks is 256, which can be fit into a uint8_t.
  */
-#define MAX_SYM_PER_BLOCK 100
-
-/**
- * The maximum size of the block that is decodable in working memory, in bytes.
- */
-#define MAX_DECODABLE_BLOCK_SIZE (SYMBOL_SIZE * MAX_SYM_PER_BLOCK)
+#define MAX_BLOCKS 256
 
 constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / sizeof(Alignment);
 
