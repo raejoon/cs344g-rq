@@ -15,6 +15,11 @@
 typedef uint32_t Alignment;
 
 /**
+ * Number of bytes per alignment.
+ */
+#define ALIGNMENT_SIZE sizeof(Alignment)
+
+/**
  * TODO:
  * Configure the size of a symbol as the maximum number of bytes that doesn't
  * result in IP fragmentation.
@@ -22,11 +27,11 @@ typedef uint32_t Alignment;
 #define SYMBOL_SIZE 8192
 
 /**
- * The maximum number of blocks is 256, which can be fit into a uint8_t.
+ * The maximum number of blocks is 256, which can be fit into a uint8_t integer.
  */
 #define MAX_BLOCKS 256
 
-constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / sizeof(Alignment);
+constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / ALIGNMENT_SIZE;
 
 typedef std::array<Alignment, NUM_ALIGN_PER_SYMBOL> RaptorQSymbol;
 
@@ -66,7 +71,11 @@ generateRandom()
 }
 
 size_t getPaddedSize(size_t size) {
-    return size + size % sizeof(Alignment);
+    if (size % ALIGNMENT_SIZE == 0) {
+        return size;
+    } else {
+        return size + ALIGNMENT_SIZE - size % ALIGNMENT_SIZE;
+    }
 }
 
 bool poll(UDPSocket* udpSocket, UDPSocket::received_datagram& datagram)
@@ -180,7 +189,7 @@ class FileWrapper {
     Alignment*
     end()
     {
-        return start + paddedSize / sizeof(Alignment);
+        return start + paddedSize / ALIGNMENT_SIZE;
     }
 
     size_t size() const
