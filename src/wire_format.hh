@@ -70,12 +70,19 @@ struct Ack {
     // RaptorQ supports at most 256 blocks
     uint64_t bitmask[4];
 
-    Ack(std::bitset<64> bitset[4])
+    // How many source symbols should be sent before start sending another
+    // round of repair symbols for previous blocks; this parameter is derived
+    // from the packet loss rate observed by the receiver during the
+    // transmission of the last decoded block.
+    uint32_t repairSymbolInterval;
+
+    Ack(std::bitset<64> bitset[4], uint32_t repairSymbolInterval)
         : header {Opcode::ACK}
         , bitmask {bitset[0].to_ullong(),
                    bitset[1].to_ullong(),
                    bitset[2].to_ullong(),
                    bitset[3].to_ullong()}
+        , repairSymbolInterval(repairSymbolInterval)
     {}
 } __attribute__((packed));
 

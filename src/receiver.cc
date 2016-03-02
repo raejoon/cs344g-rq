@@ -2,11 +2,9 @@
 #include <chrono>
 #include <iostream>
 #include <RaptorQ.hpp>
-#include <unistd.h>
 
 #include "tub.hh"
 #include "common.hh"
-#include "socket.hh"
 #include "wire_format.hh"
 #include "progress.hh"
 
@@ -110,19 +108,27 @@ int main( int argc, char *argv[] )
         update_progressbar(progress); 
     }
     
+    uint32_t numSymbolRecv[MAX_BLOCKS] {0};
+    uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
+    uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     while (decodedBlocks.count() < decoder.blocks()) {
         datagram = udpSocket->recv();
         Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
         uint8_t sbn = dataPacket->id >> 24;
-        if (debug_f) 
-            printf("Received sbn = %u, esi = %u\n",
-                 static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
+        uint32_t esi = (dataPacket->id << 8) >> 8;
+
+        printf("Received sbn = %u, esi = %u\n",
+               static_cast<uint32_t>(sbn), esi);
+        numSymbolRecv[sbn]++;
+        maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
 
         auto currTime = std::chrono::system_clock::now();
         if (currTime > nextAckTime) {
-            if (debug_f) printf("Sent Heartbeat ACK\n");
+            // Send heartbeat ACK
+            printf("Sent Heartbeat ACK\n");
             sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
-                                              decodedBlocks.bitset);
+                                              decodedBlocks.bitset,
+                                              repairSymbolInterval);
             nextAckTime = currTime + HEART_BEAT_INTERVAL;
         }
 
@@ -147,6 +153,23 @@ int main( int argc, char *argv[] )
             // send ACK for block sbn
             if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
+
+            // Update the repair symbol transmission interval to be sent in the
+            // next ACK
+            float packetLossRate;
+            if (numSymbolRecv[sbn] == maxSymbolRecv[sbn] + 1) {
+                packetLossRate = 0.0f;
+                repairSymbolInterval = ~0u;
+            } else {
+                packetLossRate = 1.0f -
+                        numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
+                assert(packetLossRate > 0.0f);
+                repairSymbolInterval = std::min(
+                        std::ceil(1.0f / packetLossRate - 1),
+                        1.0f * ((uint32_t)~0u));
+            }
+            printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
+                   packetLossRate, repairSymbolInterval);
         }
     }
 
@@ -159,10 +182,9 @@ int main( int argc, char *argv[] )
     assert(decodedBlocks.count() == decoder.blocks());
     printf("File decoded successfully.\n");
 
-    // Teardown phase: keep sending ACK until we do not get any packet from
-    // the sender for a while
+    // Teardown phase: keep sending ACK until the sender becomes quite for a while
 
-    // Clean up the udp socket recv buffer first
+    // Clean up the udp socket receiving buffer first
     fcntl(udpSocket->fd_num(), F_SETFL, O_NONBLOCK);
     while (poll(udpSocket.get(), datagram)) { }
     std::chrono::time_point<std::chrono::system_clock> stopTime =
@@ -174,7 +196,7 @@ int main( int argc, char *argv[] )
 
         if (std::chrono::system_clock::now() < stopTime) {
             sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
-                                              decodedBlocks.bitset);
+                                              decodedBlocks.bitset, ~0u);
             std::this_thread::sleep_for(HEART_BEAT_INTERVAL);
         } else {
             break;

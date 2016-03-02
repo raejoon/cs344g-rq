@@ -106,8 +106,8 @@ void transmit(RaptorQEncoder& encoder,
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
 
-    uint32_t numSourceSymbolSent = 0;
-    const size_t REPAIR_SYMBOL_SEND_INTERVAL = 4; // TODO
+    uint32_t sourceSymbolCounter = 0;
+    uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
 
     update_progress(progress, sentsize);
@@ -118,12 +118,14 @@ void transmit(RaptorQEncoder& encoder,
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
             sendSymbol(udpSocket, sourceSymbolIter);
-            numSourceSymbolSent++;
-            if (numSourceSymbolSent % REPAIR_SYMBOL_SEND_INTERVAL == 0) {
+            sourceSymbolCounter = (sourceSymbolCounter + 1) %
+                    repairSymbolInterval;
+            if (sourceSymbolCounter == 0) {
                 // Poll to see if any ACK arrives
                 while (poll(udpSocket, datagram)) {
                     Tub<WireFormat::Ack> ack(datagram.payload);
                     decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+                    repairSymbolInterval = ack->repairSymbolInterval;
                     //printf("Received ACK\n");
                 }
 

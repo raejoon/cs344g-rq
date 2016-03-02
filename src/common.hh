@@ -33,6 +33,11 @@ typedef uint32_t Alignment;
  */
 #define MAX_BLOCKS 256
 
+/**
+ * Initial value of the repair symbol transmission interval.
+ */
+#define INIT_REPAIR_SYMBOL_INTERVAL 10
+
 constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / ALIGNMENT_SIZE;
 
 typedef std::array<Alignment, NUM_ALIGN_PER_SYMBOL> RaptorQSymbol;
