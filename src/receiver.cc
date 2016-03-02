@@ -38,9 +38,10 @@ int main( int argc, char *argv[] )
     UDPSocket::received_datagram datagram = udpSocket->recv();
     Address senderAddr = datagram.source_address;
     Tub<WireFormat::HandshakeReq> req(datagram.payload);
-    printf("Recevied handshake request: {connection Id = %u, file size = %zu, "
-                   "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
-           req->connectionId, req->fileSize, req->otiCommon, req->otiScheme);
+    printf("Recevied handshake request: {connection Id = %u, file name = %s, "
+            "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+            req->connectionId, req->fileName, req->fileSize, req->otiCommon,
+            req->otiScheme);
     sendInWireFormat<WireFormat::HandshakeResp>(
             udpSocket.get(), senderAddr, uint32_t(req->connectionId));
 
@@ -49,7 +50,7 @@ int main( int argc, char *argv[] )
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
-            open("demo.out", O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+            open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
     size_t paddedSize = getPaddedSize(req->fileSize);
     SystemCall("Stretch the file: lseek", lseek(fd, paddedSize - 1, SEEK_SET));
     SystemCall("Stretch the file: write a NULL char", write(fd, "", 1));

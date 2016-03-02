@@ -15,6 +15,13 @@
 typedef uint32_t Alignment;
 
 /**
+ * Number of bytes per alignment.
+ */
+#define ALIGNMENT_SIZE sizeof(Alignment)
+
+#define MAX_FILENAME_LEN 64
+
+/**
  * TODO:
  * Configure the size of a symbol as the maximum number of bytes that doesn't
  * result in IP fragmentation.
@@ -22,17 +29,11 @@ typedef uint32_t Alignment;
 #define SYMBOL_SIZE 8192
 
 /**
- * The maximum bumber of symbols per block; the asymptotic complexity of time
- * and space are cubic and quadratic of this number respectively.
+ * The maximum number of blocks is 256, which can be fit into a uint8_t integer.
  */
-#define MAX_SYM_PER_BLOCK 100
+#define MAX_BLOCKS 256
 
-/**
- * The maximum size of the block that is decodable in working memory, in bytes.
- */
-#define MAX_DECODABLE_BLOCK_SIZE (SYMBOL_SIZE * MAX_SYM_PER_BLOCK)
-
-constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / sizeof(Alignment);
+constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / ALIGNMENT_SIZE;
 
 typedef std::array<Alignment, NUM_ALIGN_PER_SYMBOL> RaptorQSymbol;
 
@@ -72,7 +73,11 @@ generateRandom()
 }
 
 size_t getPaddedSize(size_t size) {
-    return size + size % sizeof(Alignment);
+    if (size % ALIGNMENT_SIZE == 0) {
+        return size;
+    } else {
+        return size + ALIGNMENT_SIZE - size % ALIGNMENT_SIZE;
+    }
 }
 
 bool poll(UDPSocket* udpSocket, UDPSocket::received_datagram& datagram)
@@ -157,9 +162,10 @@ struct Bitmask256 {
 template<typename Alignment>
 class FileWrapper {
   public:
-    FileWrapper(const char* filename)
-        : fd(open(filename, O_RDONLY))
-        , fileSize(getFileSize(filename))
+    FileWrapper(const std::string& pathname)
+        : fd(open(pathname.c_str(), O_RDONLY))
+        , fileName(pathname.substr(pathname.find_last_of("/\\") + 1))
+        , fileSize(getFileSize(pathname))
         , paddedSize(getPaddedSize(fileSize))
         , start(reinterpret_cast<Alignment*>(
                     mmap(NULL, paddedSize, PROT_READ, MAP_PRIVATE, fd, 0)))
@@ -186,7 +192,13 @@ class FileWrapper {
     Alignment*
     end()
     {
-        return start + paddedSize / sizeof(Alignment);
+        return start + paddedSize / ALIGNMENT_SIZE;
+    }
+
+    const char*
+    name() const
+    {
+        return fileName.c_str();
     }
 
     size_t size() const
@@ -197,13 +209,15 @@ class FileWrapper {
   private:
 
     static size_t
-    getFileSize(const char* filename) {
+    getFileSize(const std::string& pathname) {
         struct stat statBuf;
-        stat(filename, &statBuf);
+        stat(pathname.c_str(), &statBuf);
         return statBuf.st_size;
     }
 
     int fd;
+
+    const std::string fileName;
 
     /**
      * The size of the file in number of bytes.

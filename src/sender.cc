@@ -31,7 +31,7 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
     uint32_t connectionId = generateRandom();
     sendInWireFormat<WireFormat::HandshakeReq>(
             udpSocket.get(), udpSocket->peer_address(),
-            connectionId, file.size(), encoder.OTI_Common(),
+            connectionId, file.name(), file.size(), encoder.OTI_Common(),
             encoder.OTI_Scheme_Specific());
     printf("Sending handshake request: {connection Id = %u, file size = %zu, "
                    "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
@@ -106,9 +106,8 @@ void transmit(RaptorQEncoder& encoder,
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
 
-//    const static uint32_t MAX_SYMBOL_SENT = MAX_SYM_PER_BLOCK * encoder.blocks() * 2;
-    const static uint32_t REPAIR_SYMBOL_SEND_INTERVAL = 4;//MAX_SYM_PER_BLOCK / 10;
     uint32_t numSourceSymbolSent = 0;
+    const size_t REPAIR_SYMBOL_SEND_INTERVAL = 4; // TODO
     UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
 
     update_progress(progress, sentsize);
@@ -161,6 +160,18 @@ void transmit(RaptorQEncoder& encoder,
     }
 }
 
+/**
+ * Derives the optimal setting of the block size limit parameter for the
+ * RaptorQ decoder.
+ */
+size_t computeOptimalBlockSize(size_t fileSize)
+{
+    const static size_t MIN_BLOCK_SIZE = SYMBOL_SIZE * 100;
+    size_t blockSize = static_cast<size_t>(
+            std::ceil(static_cast<double>(fileSize) / MAX_BLOCKS));
+    return std::max(blockSize, MIN_BLOCK_SIZE);
+}
+
 int main(int argc, char *argv[])
 {
     /* check the command-line arguments */
@@ -186,7 +197,6 @@ int main(int argc, char *argv[])
     }
 
     // Read the file to transfer
-    // TODO: modify readFile to return the FileWrapper directly
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
 
@@ -195,11 +205,9 @@ int main(int argc, char *argv[])
                            file.end(),
                            SYMBOL_SIZE, /* no interleaving */
                            SYMBOL_SIZE,
-                           MAX_DECODABLE_BLOCK_SIZE);
+                           computeOptimalBlockSize(file.size()));
 
     // Precompute intermediate symbols in background
-    // TODO: is one dedicated thread for precomputation enough?
-//    encoder.precompute(std::max(std::thread::hardware_concurrency(), 1), true);
     encoder.precompute(1, true);
 
     // Initiate handshake process
