@@ -2,11 +2,13 @@
 #include <chrono>
 #include <iostream>
 #include <RaptorQ.hpp>
+#include <unistd.h>
 
 #include "tub.hh"
 #include "common.hh"
 #include "socket.hh"
 #include "wire_format.hh"
+#include "progress.hh"
 
 const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
         std::chrono::milliseconds(500);
@@ -14,15 +16,43 @@ const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
 const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
         2 * HEART_BEAT_INTERVAL;
 
-int main( int argc, char *argv[] )
-{
+void printUsage(char *command) {
+    std::cerr << "Usage: " << command << " [-dh]" << std::endl;
+    std::cerr << "\t-h: help" << std::endl;
+    std::cerr << "\t-d: debug (per-symbol messages instead of a progress bar)" << std::endl;
+}
+
+int checkArgs(int argc, char *argv[]) {
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
-    if ( argc != 1 ) {
-        std::cerr << "Usage: " << argv[ 0 ] << std::endl;
-        return EXIT_FAILURE;
+    // check options
+    int debug_f = 0;
+    int c = 0;
+    while ((c = getopt(argc, argv, "dh")) != -1) {
+        switch (c) {
+            case 'd':
+                debug_f = 1;
+                break;
+            case 'h':
+            case '?':
+                printUsage(argv[0]);
+                return -1;
+            default:
+                abort();
+        }
     }
+    if ( optind != argc ) {
+      printUsage(argv[0]);
+        return -1;
+    }
+    return debug_f;
+}
+
+int main( int argc, char *argv[] )
+{
+    int debug_f;
+    if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
 
     // Wait for handshake request and send back handshake response
     std::unique_ptr<UDPSocket> udpSocket{new UDPSocket};
@@ -70,16 +100,27 @@ int main( int argc, char *argv[] )
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
             std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     Bitmask256 decodedBlocks;
+
+
+    uint64_t sentsize = 0;
+    progress_t progress;
+    initialize_progress(progress, req->fileSize);
+    if (!debug_f) {
+        update_progress(progress, sentsize);
+        update_progressbar(progress); 
+    }
+    
     while (decodedBlocks.count() < decoder.blocks()) {
         datagram = udpSocket->recv();
         Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
         uint8_t sbn = dataPacket->id >> 24;
-        printf("Received sbn = %u, esi = %u\n",
-               static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
+        if (debug_f) 
+            printf("Received sbn = %u, esi = %u\n",
+                 static_cast<uint32_t>(sbn), ((dataPacket->id << 8) >> 8));
 
         auto currTime = std::chrono::system_clock::now();
         if (currTime > nextAckTime) {
-            printf("Sent Heartbeat ACK\n");
+            if (debug_f) printf("Sent Heartbeat ACK\n");
             sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
                                               decodedBlocks.bitset);
             nextAckTime = currTime + HEART_BEAT_INTERVAL;
@@ -95,12 +136,20 @@ int main( int argc, char *argv[] )
                 dataPacket->id);
 
         begin = blockStart[sbn];
+       
+        sentsize += SYMBOL_SIZE;
+        if (!debug_f) {
+          update_progress(progress, sentsize);
+          update_progressbar(progress);     
+        }
+
         if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
             // send ACK for block sbn
-            printf("Block %u decoded.\n", static_cast<int>(sbn));
+            if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
         }
     }
+
     SystemCall("msync", msync(start, paddedSize, MS_SYNC));
     SystemCall("munmap", munmap(start, paddedSize));
     SystemCall("truncate the padding at the end of the file",
