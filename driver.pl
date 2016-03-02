@@ -8,7 +8,7 @@ if ( $receiver_pid < 0 ) {
   die qq{$!};
 } elsif ( $receiver_pid == 0 ) {
   # child
-  exec q{./build/receiver > receiver.log} or die qq{$!};
+  exec q{./build/receiver -d > receiver.log} or die qq{$!};
 }
 
 chomp( my $prefix = qx{dirname `which mm-link`} );
@@ -16,7 +16,7 @@ my $tracedir = $prefix . q{/../share/mahimahi/traces};
 
 # run sender inside a link, delay shell
 #my @command = qw{mm-delay 20 mm-link UPLINK DOWNLINK -- sh -c};
-my @command = qw{mm-delay 20 mm-link UPLINK DOWNLINK mm-loss uplink 0.2 -- sh -c};
+my @command = qw{mm-delay 20 mm-link UPLINK DOWNLINK mm-loss uplink 0.0 -- sh -c};
 
 push @command, q{./build/sender $MAHIMAHI_BASE demo.20M};
 
@@ -26,5 +26,7 @@ $command[ 3 ] = qq{$tracedir/Verizon-LTE-short.down};
 die unless $command[ 4 ] eq "DOWNLINK";
 $command[ 4 ] = qq{$tracedir/Verizon-LTE-short.up};
 
+system @command;
 
-system @command
+# kill the receiver
+kill 'INT', $receiver_pid;
