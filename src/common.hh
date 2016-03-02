@@ -19,6 +19,8 @@ typedef uint32_t Alignment;
  */
 #define ALIGNMENT_SIZE sizeof(Alignment)
 
+#define MAX_FILENAME_LEN 64
+
 /**
  * TODO:
  * Configure the size of a symbol as the maximum number of bytes that doesn't
@@ -160,9 +162,10 @@ struct Bitmask256 {
 template<typename Alignment>
 class FileWrapper {
   public:
-    FileWrapper(const char* filename)
-        : fd(open(filename, O_RDONLY))
-        , fileSize(getFileSize(filename))
+    FileWrapper(const std::string& pathname)
+        : fd(open(pathname.c_str(), O_RDONLY))
+        , fileName(pathname.substr(pathname.find_last_of("/\\") + 1))
+        , fileSize(getFileSize(pathname))
         , paddedSize(getPaddedSize(fileSize))
         , start(reinterpret_cast<Alignment*>(
                     mmap(NULL, paddedSize, PROT_READ, MAP_PRIVATE, fd, 0)))
@@ -192,6 +195,12 @@ class FileWrapper {
         return start + paddedSize / ALIGNMENT_SIZE;
     }
 
+    const char*
+    name() const
+    {
+        return fileName.c_str();
+    }
+
     size_t size() const
     {
         return fileSize;
@@ -200,13 +209,15 @@ class FileWrapper {
   private:
 
     static size_t
-    getFileSize(const char* filename) {
+    getFileSize(const std::string& pathname) {
         struct stat statBuf;
-        stat(filename, &statBuf);
+        stat(pathname.c_str(), &statBuf);
         return statBuf.st_size;
     }
 
     int fd;
+
+    const std::string fileName;
 
     /**
      * The size of the file in number of bytes.

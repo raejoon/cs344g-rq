@@ -21,11 +21,13 @@ struct Header {
 struct HandshakeReq {
     Header header;
     uint32_t connectionId;
+    char fileName[MAX_FILENAME_LEN];
     size_t fileSize;
     RaptorQ::OTI_Common_Data otiCommon;
     RaptorQ::OTI_Scheme_Specific_Data otiScheme;
 
     HandshakeReq(uint32_t connectionId,
+                 const char* fileName,
                  size_t fileSize,
                  RaptorQ::OTI_Common_Data otiCommon,
                  RaptorQ::OTI_Scheme_Specific_Data otiScheme)
@@ -34,7 +36,9 @@ struct HandshakeReq {
         , fileSize(fileSize)
         , otiCommon(otiCommon)
         , otiScheme(otiScheme)
-    {}
+    {
+        std::strcpy(this->fileName, fileName);
+    }
 } __attribute__((packed));
 
 struct HandshakeResp {

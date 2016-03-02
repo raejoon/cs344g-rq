@@ -31,7 +31,7 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
     uint32_t connectionId = generateRandom();
     sendInWireFormat<WireFormat::HandshakeReq>(
             udpSocket.get(), udpSocket->peer_address(),
-            connectionId, file.size(), encoder.OTI_Common(),
+            connectionId, file.name(), file.size(), encoder.OTI_Common(),
             encoder.OTI_Scheme_Specific());
     printf("Sending handshake request: {connection Id = %u, file size = %zu, "
                    "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
@@ -208,8 +208,6 @@ int main(int argc, char *argv[])
                            computeOptimalBlockSize(file.size()));
 
     // Precompute intermediate symbols in background
-    // TODO: is one dedicated thread for precomputation enough?
-//    encoder.precompute(std::max(std::thread::hardware_concurrency(), 1), true);
     encoder.precompute(1, true);
 
     // Initiate handshake process
