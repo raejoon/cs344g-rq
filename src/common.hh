@@ -22,11 +22,10 @@ typedef uint32_t Alignment;
 #define MAX_FILENAME_LEN 64
 
 /**
- * TODO:
  * Configure the size of a symbol as the maximum number of bytes that doesn't
  * result in IP fragmentation.
  */
-#define SYMBOL_SIZE 8192
+#define SYMBOL_SIZE 1400
 
 /**
  * The maximum number of blocks is 256, which can be fit into a uint8_t integer.

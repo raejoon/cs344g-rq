@@ -65,7 +65,7 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
 void congestionControl() {
     // TODO(Francis): implement congestion control logic here
     // Sleep-based congestion control :p
-    usleep(10000);
+    usleep(1000);
 }
 
 /**
