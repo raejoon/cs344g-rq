@@ -53,17 +53,17 @@ int main( int argc, char *argv[] )
     if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
 
     // Wait for handshake request and send back handshake response
-    std::unique_ptr<UDPSocket> udpSocket{new UDPSocket};
+    std::unique_ptr<UDPSocket> socket{new UDPSocket};
     try {
-        udpSocket->bind(Address("0", 6330));
+        socket->bind(Address("0", 6330));
     }
     catch (unix_error e) {
         std::cerr << "Port 6330 is already used. Picking a random port..." << std::endl;
-        udpSocket->bind(Address("0", 0));
+        socket->bind(Address("0", 0));
     }
-    printf("%s\n", udpSocket->local_address().to_string().c_str());
+    printf("%s\n", socket->local_address().to_string().c_str());
 
-    UDPSocket::received_datagram datagram = udpSocket->recv();
+    UDPSocket::received_datagram datagram = socket->recv();
     Address senderAddr = datagram.source_address;
     Tub<WireFormat::HandshakeReq> req(datagram.payload);
     printf("Recevied handshake request: {connection Id = %u, file name = %s, "
@@ -71,7 +71,7 @@ int main( int argc, char *argv[] )
             req->connectionId, req->fileName, req->fileSize, req->otiCommon,
             req->otiScheme);
     sendInWireFormat<WireFormat::HandshakeResp>(
-            udpSocket.get(), senderAddr, uint32_t(req->connectionId));
+            socket.get(), senderAddr, uint32_t(req->connectionId));
 
 
     // Create the receiving file
@@ -106,7 +106,7 @@ int main( int argc, char *argv[] )
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     while (decodedBlocks.count() < decoder.blocks()) {
-        datagram = udpSocket->recv();
+        datagram = socket->recv();
         Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
@@ -122,7 +122,7 @@ int main( int argc, char *argv[] )
         if (currTime > nextAckTime) {
             // Send heartbeat ACK
             if (debug_f) printf("Sent Heartbeat ACK\n");
-            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
+            sendInWireFormat<WireFormat::Ack>(socket.get(), senderAddr,
                                               decodedBlocks.bitset,
                                               repairSymbolInterval);
             nextAckTime = currTime + HEART_BEAT_INTERVAL;
@@ -177,17 +177,17 @@ int main( int argc, char *argv[] )
     // Teardown phase: keep sending ACK until the sender becomes quite for a while
 
     // Clean up the udp socket receiving buffer first
-    fcntl(udpSocket->fd_num(), F_SETFL, O_NONBLOCK);
-    while (poll(udpSocket.get(), datagram)) { }
+    fcntl(socket->fd_num(), F_SETFL, O_NONBLOCK);
+    while (poll(socket.get(), datagram)) { }
     std::chrono::time_point<std::chrono::system_clock> stopTime =
             std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
     while (true) {
-        if (poll(udpSocket.get(), datagram)) {
+        if (poll(socket.get(), datagram)) {
             stopTime = std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
         }
 
         if (std::chrono::system_clock::now() < stopTime) {
-            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
+            sendInWireFormat<WireFormat::Ack>(socket.get(), senderAddr,
                                               decodedBlocks.bitset, ~0u);
             std::this_thread::sleep_for(HEART_BEAT_INTERVAL);
         } else {

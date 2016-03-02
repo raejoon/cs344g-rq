@@ -24,13 +24,13 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
                                              const std::string& port,
                                              const FileWrapper<Alignment>& file)
 {
-    std::unique_ptr<UDPSocket> udpSocket {new UDPSocket};
-    udpSocket->connect(Address(host, port));
+    std::unique_ptr<UDPSocket> socket {new UDPSocket};
+    socket->connect(Address(host, port));
 
     // Send handshake request
     uint32_t connectionId = generateRandom();
     sendInWireFormat<WireFormat::HandshakeReq>(
-            udpSocket.get(), udpSocket->peer_address(),
+            socket.get(), socket->peer_address(),
             connectionId, file.name(), file.size(), encoder.OTI_Common(),
             encoder.OTI_Scheme_Specific());
     printf("Sending handshake request: {connection Id = %u, file size = %zu, "
@@ -39,7 +39,7 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
            encoder.OTI_Scheme_Specific());
 
     // Wait for handshake response
-    UDPSocket::received_datagram recvDatagram = udpSocket->recv();
+    UDPSocket::received_datagram recvDatagram = socket->recv();
     Tub<WireFormat::HandshakeResp> resp(recvDatagram.payload);
     // TODO: the right thing to do after receiving a datagram is to check
     // the opcode first
@@ -49,8 +49,8 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
                resp->connectionId);
 
         // Set the socket to be non-blocking to support polling
-        fcntl(udpSocket->fd_num(), F_SETFL, O_NONBLOCK);
-        return udpSocket;
+        fcntl(socket->fd_num(), F_SETFL, O_NONBLOCK);
+        return socket;
     }
 
     return nullptr;
@@ -77,7 +77,7 @@ void congestionControl() {
  *      A symbol iterator referencing the symbol about to send; the position
  *      of the iterator will be advanced by one after this function is called.
  */
-void sendSymbol(UDPSocket *udpSocket,
+void sendSymbol(UDPSocket *socket,
                 RaptorQSymbolIterator &symbolIterator)
 {
     static RaptorQSymbol symbol {0};
@@ -86,13 +86,13 @@ void sendSymbol(UDPSocket *udpSocket,
 
     // Wait until the congestion controller gives us a pass
     congestionControl();
-    sendInWireFormat<WireFormat::DataPacket>(udpSocket,
-            udpSocket->peer_address(), (*symbolIterator).id(), symbol.data());
+    sendInWireFormat<WireFormat::DataPacket>(socket,
+            socket->peer_address(), (*symbolIterator).id(), symbol.data());
     ++symbolIterator;
 }
 
 void transmit(RaptorQEncoder& encoder,
-              UDPSocket* udpSocket)
+              UDPSocket* socket)
 {
     // Initialize progress bar
     progress_t progress {encoder.blocks()};
@@ -115,12 +115,12 @@ void transmit(RaptorQEncoder& encoder,
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
-            sendSymbol(udpSocket, sourceSymbolIter);
+            sendSymbol(socket, sourceSymbolIter);
             sourceSymbolCounter++;
 
             if (sourceSymbolCounter % POLL_INTERVAL == 0) {
                 // Poll to see if any ACK arrives
-                while (poll(udpSocket, datagram)) {
+                while (poll(socket, datagram)) {
                     Tub<WireFormat::Ack> ack(datagram.payload);
                     uint8_t oldCount = decodedBlocks.count();
                     decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
@@ -134,7 +134,7 @@ void transmit(RaptorQEncoder& encoder,
                 // Send repair symbols of previous blocks
                 for (uint8_t prevBlock = 0; prevBlock < currBlock; prevBlock++) {
                     if (!decodedBlocks.test(prevBlock)) {
-                        sendSymbol(udpSocket, repairSymbolIters[prevBlock]);
+                        sendSymbol(socket, repairSymbolIters[prevBlock]);
                     }
                 }
             }
@@ -145,12 +145,12 @@ void transmit(RaptorQEncoder& encoder,
         // Send repair symbols for in round-robin
         for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
             if (!decodedBlocks.test(sbn)) {
-                sendSymbol(udpSocket, repairSymbolIters[sbn]);
+                sendSymbol(socket, repairSymbolIters[sbn]);
             }
         }
 
         // Poll to see if any ACK arrives
-        while (poll(udpSocket, datagram)) {
+        while (poll(socket, datagram)) {
             Tub<WireFormat::Ack> ack(datagram.payload);
             uint8_t oldCount = decodedBlocks.count();
             decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
@@ -211,15 +211,15 @@ int main(int argc, char *argv[])
     encoder.precompute(1, true);
 
     // Initiate handshake process
-    std::unique_ptr<UDPSocket> udpSocket = initiateHandshake(
+    std::unique_ptr<UDPSocket> socket = initiateHandshake(
             encoder, host, port, file);
-    if (!udpSocket) {
+    if (!socket) {
         printf("Handshake failure!\n");
         return EXIT_SUCCESS;
     }
 
     // Start transmission
-    transmit(encoder, udpSocket.get());
+    transmit(encoder, socket.get());
 
     return EXIT_SUCCESS;
 }
