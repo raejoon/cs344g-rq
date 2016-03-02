@@ -73,8 +73,6 @@ int main( int argc, char *argv[] )
     sendInWireFormat<WireFormat::HandshakeResp>(
             udpSocket.get(), senderAddr, uint32_t(req->connectionId));
 
-    // Start receiving symbols
-    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
@@ -88,44 +86,42 @@ int main( int argc, char *argv[] )
         return EXIT_FAILURE;
     }
 
+    // Initialize progress bar
+    progress_t progress {req->fileSize};
+    progress.show();
+
+    // Start receiving symbols
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
     std::vector<Alignment*> blockStart(decoder.blocks() + 1);
     blockStart[0] = reinterpret_cast<Alignment*>(start);
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
         blockStart[sbn + 1] = blockStart[sbn] +
-                decoder.block_size(sbn) / sizeof(Alignment);
+                              decoder.block_size(sbn) / sizeof(Alignment);
     }
 
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
             std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     Bitmask256 decodedBlocks;
-
-
-    uint64_t sentsize = 0;
-    progress_t progress;
-    initialize_progress(progress, req->fileSize);
-    if (!debug_f) {
-        update_progress(progress, sentsize);
-        update_progressbar(progress); 
-    }
-    
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     while (decodedBlocks.count() < decoder.blocks()) {
         datagram = udpSocket->recv();
         Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
-        uint8_t sbn = dataPacket->id >> 24;
+        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
-        printf("Received sbn = %u, esi = %u\n",
-               static_cast<uint32_t>(sbn), esi);
+        if (debug_f) {
+            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn),
+                   esi);
+        }
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
 
         auto currTime = std::chrono::system_clock::now();
         if (currTime > nextAckTime) {
             // Send heartbeat ACK
-            printf("Sent Heartbeat ACK\n");
+            if (debug_f) printf("Sent Heartbeat ACK\n");
             sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
                                               decodedBlocks.bitset,
                                               repairSymbolInterval);
@@ -140,15 +136,9 @@ int main( int argc, char *argv[] )
         decoder.add_symbol(begin,
                 reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
                 dataPacket->id);
+        progress.update(SYMBOL_SIZE);
 
         begin = blockStart[sbn];
-       
-        sentsize += SYMBOL_SIZE;
-        if (!debug_f) {
-          update_progress(progress, sentsize);
-          update_progressbar(progress);     
-        }
-
         if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
             // send ACK for block sbn
             if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
@@ -164,12 +154,14 @@ int main( int argc, char *argv[] )
                 packetLossRate = 1.0f -
                         numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
                 assert(packetLossRate > 0.0f);
-                repairSymbolInterval = std::min(
+                repairSymbolInterval = static_cast<uint32_t >(std::min(
                         std::ceil(1.0f / packetLossRate - 1),
-                        1.0f * ((uint32_t)~0u));
+                        1.0f * (((uint32_t)~0u) - 1)));
             }
-            printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
-                   packetLossRate, repairSymbolInterval);
+            if (debug_f) {
+                printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
+                       packetLossRate, repairSymbolInterval);
+            }
         }
     }
 

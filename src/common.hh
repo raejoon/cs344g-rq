@@ -34,9 +34,18 @@ typedef uint32_t Alignment;
 #define MAX_BLOCKS 256
 
 /**
- * Initial value of the repair symbol transmission interval.
+ * Initial value of the repair symbol transmission interval. It must be set
+ * to a relatively small number because the sender will only get a more
+ * accurate estimated value from the receiver once it has decoded the first
+ * block. If we set this initial value too high and we are under a high packet
+ * loss environment, the sender may end up using this initial value even after
+ * all the source symbols have been transmitted and none of the blocks has been
+ * successfully decoded by the receiver.
+ *
+ * Right now, we conservatively assume the packet loss rate p is 50%. So the
+ * initial interval is set to 1( = (1-p)/p).
  */
-#define INIT_REPAIR_SYMBOL_INTERVAL 10
+#define INIT_REPAIR_SYMBOL_INTERVAL 1
 
 constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / ALIGNMENT_SIZE;
 

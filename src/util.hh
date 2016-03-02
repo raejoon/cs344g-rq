@@ -43,7 +43,7 @@ inline void print_exception( const std::exception & e )
 }
 
 /* error-checking wrapper for most syscalls */
-inline int SystemCall( const char * s_attempt, const int return_value )
+inline int SystemCall( const char * s_attempt, const ssize_t return_value )
 {
   if ( return_value >= 0 ) {
     return return_value;
@@ -53,7 +53,7 @@ inline int SystemCall( const char * s_attempt, const int return_value )
 }
 
 /* version of SystemCall that takes a C++ std::string */
-inline int SystemCall( const std::string & s_attempt, const int return_value )
+inline int SystemCall( const std::string & s_attempt, const ssize_t return_value )
 {
   return SystemCall( s_attempt.c_str(), return_value );
 }
