@@ -68,6 +68,7 @@ struct progress_t {
         std::cout << std::setw(2) << std::setfill('0') << secs << " ";
 
         int leftsize = workSize - completed;
+        assert(leftsize >= 0);
         double rate = completed / elapsed_seconds;
         if (rate > 0) {
             int remaining_seconds = (int) (leftsize / rate);
@@ -84,7 +85,7 @@ struct progress_t {
 
         std::cout << "\r";
         std::cout.flush();
-        if (percentage == 100) std::cout << std::endl;
+        if (leftsize == 0) std::cout << std::endl;
     }
 
 };

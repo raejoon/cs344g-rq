@@ -34,6 +34,18 @@ constexpr size_t SYMBOL_SIZE = (1400 / ALIGNMENT_SIZE) * ALIGNMENT_SIZE;
 #define MAX_BLOCKS 256
 
 /**
+ * The maximum number of symbols in a source block is 56403.
+ */
+#define MAX_SYMBOLS_PER_BLOCK 56403
+
+/**
+ * Given our choice of SYMBOL_SIZE to avoid IP fragmentation, the maximum size
+ * of the file we can support is 20214835200 bytes, or ~20GBs.
+ */
+constexpr uint64_t MAX_FILE_SIZE = MAX_BLOCKS * MAX_SYMBOLS_PER_BLOCK *
+        SYMBOL_SIZE;
+
+/**
  * Initial value of the repair symbol transmission interval. It must be set
  * to a relatively small number because the sender will only get a more
  * accurate estimated value from the receiver once it has decoded the first

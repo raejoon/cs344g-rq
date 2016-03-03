@@ -157,15 +157,27 @@ void transmit(RaptorQEncoder& encoder,
 }
 
 /**
- * Derives the optimal setting of the block size limit parameter for the
- * RaptorQ decoder.
+ * Instantiates a RaptorQ encoder with an (near) optimal setting.
  */
-size_t computeOptimalBlockSize(size_t fileSize)
+template<typename Alignment>
+std::unique_ptr<RaptorQEncoder> getEncoder(FileWrapper<Alignment>& file)
 {
-    const static size_t MIN_BLOCK_SIZE = SYMBOL_SIZE * 100;
-    size_t blockSize = static_cast<size_t>(
-            std::ceil(static_cast<double>(fileSize) / MAX_BLOCKS));
-    return std::max(blockSize, MIN_BLOCK_SIZE);
+    int numOfSymbolsPerBlock = 64;
+    while (numOfSymbolsPerBlock <= 1024) {
+        std::unique_ptr<RaptorQEncoder> encoder {
+                new RaptorQEncoder(file.begin(),
+                                   file.end(),
+                                   SYMBOL_SIZE, /* no interleaving */
+                                   SYMBOL_SIZE,
+                                   numOfSymbolsPerBlock * SYMBOL_SIZE)
+        };
+        if (*encoder) {
+            return encoder;
+        }
+        numOfSymbolsPerBlock += 64;
+    }
+    printf("Unable to instantiate a RaptorQ encoder.\n");
+    exit(EXIT_FAILURE);
 }
 
 int main(int argc, char *argv[])
@@ -197,25 +209,21 @@ int main(int argc, char *argv[])
     printf("Done reading file\n");
 
     // Setup parameters of the RaptorQ protocol
-    RaptorQEncoder encoder(file.begin(),
-                           file.end(),
-                           SYMBOL_SIZE, /* no interleaving */
-                           SYMBOL_SIZE,
-                           computeOptimalBlockSize(file.size()));
+    std::unique_ptr<RaptorQEncoder> encoder = getEncoder(file);
 
     // Precompute intermediate symbols in background
-    encoder.precompute(1, true);
+    encoder->precompute(1, true);
 
     // Initiate handshake process
     std::unique_ptr<UDPSocket> socket = initiateHandshake(
-            encoder, host, port, file);
+            *encoder, host, port, file);
     if (!socket) {
         printf("Handshake failure!\n");
         return EXIT_SUCCESS;
     }
 
     // Start transmission
-    transmit(encoder, socket.get());
+    transmit(*encoder, socket.get());
 
     return EXIT_SUCCESS;
 }

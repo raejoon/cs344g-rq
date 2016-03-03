@@ -91,7 +91,7 @@ int main( int argc, char *argv[] )
     }
 
     // Initialize progress bar
-    progress_t progress {req->fileSize};
+    progress_t progress {decoderPaddedSize};
     progress.show();
 
     // Start receiving symbols
@@ -139,10 +139,11 @@ int main( int argc, char *argv[] )
         decoder.add_symbol(begin,
                 reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
                 dataPacket->id);
-        progress.update(SYMBOL_SIZE);
 
         begin = blockStart[sbn];
         if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
+            progress.update(decoder.block_size(sbn));
+
             // send ACK for block sbn
             if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
