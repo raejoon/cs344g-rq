@@ -4,7 +4,6 @@
 
 #include "tub.hh"
 #include "common.hh"
-#include "socket.hh"
 #include "wire_format.hh"
 #include "progress.hh"
 
@@ -47,9 +46,6 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
     if (connectionId == resp->connectionId) {
         printf("Received handshake response: {connectionId = %u}\n",
                resp->connectionId);
-
-        // Set the socket to be non-blocking to support polling
-        fcntl(socket->fd_num(), F_SETFL, O_NONBLOCK);
         return socket;
     }
 
@@ -65,7 +61,7 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
 void congestionControl() {
     // TODO(Francis): implement congestion control logic here
     // Sleep-based congestion control :p
-    usleep(1000);
+//    usleep(1000);
 }
 
 /**

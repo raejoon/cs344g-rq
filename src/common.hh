@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/poll.h>
 
 #include "socket.hh"
 
@@ -85,15 +86,17 @@ generateRandom()
     return std::rand();
 }
 
-bool poll(UDPSocket* udpSocket, UDPSocket::received_datagram& datagram)
+bool poll(UDPSocket* socket, UDPSocket::received_datagram& datagram)
 {
     try {
-        datagram = udpSocket->recv();
+        struct pollfd ufds {socket->fd_num(), POLLIN, 0};
+        if (SystemCall("poll", poll(&ufds, 1, 0)) == 0) {
+            return false;
+        }
+        datagram = socket->recv();
         return true;
     } catch (const unix_error &e) {
-        if (e.code().value() != EAGAIN) {
-            printf("%s\n", e.what());
-        }
+        printf("%s\n", e.what());
         return false;
     }
 }

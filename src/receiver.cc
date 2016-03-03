@@ -1,4 +1,3 @@
-
 #include <chrono>
 #include <iostream>
 #include <RaptorQ.hpp>
@@ -181,7 +180,6 @@ int main( int argc, char *argv[] )
     // Teardown phase: keep sending ACK until the sender becomes quite for a while
 
     // Clean up the udp socket receiving buffer first
-    fcntl(socket->fd_num(), F_SETFL, O_NONBLOCK);
     while (poll(socket.get(), datagram)) { }
     std::chrono::time_point<std::chrono::system_clock> stopTime =
             std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
