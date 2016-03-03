@@ -73,14 +73,19 @@ int main( int argc, char *argv[] )
     sendInWireFormat<WireFormat::HandshakeResp>(
             socket.get(), senderAddr, uint32_t(req->connectionId));
 
+    // Set up the RaptorQ decoder
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
+    size_t decoderPaddedSize = 0;
+    for (int i = 0; i < decoder.blocks(); i++) {
+        decoderPaddedSize += decoder.block_size(i);
+    }
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
             open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
-    size_t paddedSize = getPaddedSize(req->fileSize);
-    SystemCall("Stretch the file: lseek", lseek(fd, paddedSize - 1, SEEK_SET));
-    SystemCall("Stretch the file: write a NULL char", write(fd, "", 1));
-    void* start = mmap(NULL, paddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
+    SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
+    SystemCall("write", write(fd, "", 1));
+    void* start = mmap(NULL, decoderPaddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
     if (start == MAP_FAILED) {
         printf("mmap failed:%s\n", strerror(errno));
         return EXIT_FAILURE;
@@ -91,12 +96,11 @@ int main( int argc, char *argv[] )
     progress.show();
 
     // Start receiving symbols
-    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
     std::vector<Alignment*> blockStart(decoder.blocks() + 1);
     blockStart[0] = reinterpret_cast<Alignment*>(start);
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
         blockStart[sbn + 1] = blockStart[sbn] +
-                              decoder.block_size(sbn) / sizeof(Alignment);
+                decoder.block_size(sbn) / ALIGNMENT_SIZE;
     }
 
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
@@ -165,8 +169,8 @@ int main( int argc, char *argv[] )
         }
     }
 
-    SystemCall("msync", msync(start, paddedSize, MS_SYNC));
-    SystemCall("munmap", munmap(start, paddedSize));
+    SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
+    SystemCall("munmap", munmap(start, decoderPaddedSize));
     SystemCall("truncate the padding at the end of the file",
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));

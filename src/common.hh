@@ -23,9 +23,9 @@ typedef uint32_t Alignment;
 
 /**
  * Configure the size of a symbol as the maximum number of bytes that doesn't
- * result in IP fragmentation.
+ * result in IP fragmentation. It must be a multiple of the ALIGNMENT_SIZE.
  */
-#define SYMBOL_SIZE 1400
+constexpr size_t SYMBOL_SIZE = (1400 / ALIGNMENT_SIZE) * ALIGNMENT_SIZE;
 
 /**
  * The maximum number of blocks is 256, which can be fit into a uint8_t integer.
@@ -83,14 +83,6 @@ generateRandom()
 {
     std::srand(std::time(0));
     return std::rand();
-}
-
-size_t getPaddedSize(size_t size) {
-    if (size % ALIGNMENT_SIZE == 0) {
-        return size;
-    } else {
-        return size + ALIGNMENT_SIZE - size % ALIGNMENT_SIZE;
-    }
 }
 
 bool poll(UDPSocket* udpSocket, UDPSocket::received_datagram& datagram)
@@ -226,6 +218,15 @@ class FileWrapper {
         struct stat statBuf;
         stat(pathname.c_str(), &statBuf);
         return statBuf.st_size;
+    }
+
+    static size_t
+    getPaddedSize(size_t size) {
+        if (size % ALIGNMENT_SIZE == 0) {
+            return size;
+        } else {
+            return size + ALIGNMENT_SIZE - size % ALIGNMENT_SIZE;
+        }
     }
 
     int fd;
