@@ -1,4 +1,3 @@
-#include <chrono>
 #include <iostream>
 #include <RaptorQ.hpp>
 
@@ -6,9 +5,6 @@
 #include "common.hh"
 #include "wire_format.hh"
 #include "progress.hh"
-
-const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
-        std::chrono::milliseconds(500);
 
 const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
         2 * HEART_BEAT_INTERVAL;

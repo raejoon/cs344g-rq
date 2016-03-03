@@ -102,7 +102,8 @@ void transmit(RaptorQEncoder& encoder,
 
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
-    const uint32_t POLL_INTERVAL = 5;
+    std::chrono::time_point<std::chrono::system_clock> nextPollTime =
+            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     uint32_t sourceSymbolCounter = 0;
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
@@ -114,7 +115,8 @@ void transmit(RaptorQEncoder& encoder,
             sendSymbol(socket, sourceSymbolIter);
             sourceSymbolCounter++;
 
-            if (sourceSymbolCounter % POLL_INTERVAL == 0) {
+            auto currTime = std::chrono::system_clock::now();
+            if (currTime > nextPollTime) {
                 // Poll to see if any ACK arrives
                 while (poll(socket, datagram)) {
                     Tub<WireFormat::Ack> ack(datagram.payload);
@@ -124,6 +126,7 @@ void transmit(RaptorQEncoder& encoder,
                     //printf("Received ACK: %u\n", decodedBlocks.count());
                     progress.update(decodedBlocks.count() - oldCount);
                 }
+                nextPollTime = currTime + HEART_BEAT_INTERVAL;
             }
 
             if (sourceSymbolCounter % repairSymbolInterval == 0) {

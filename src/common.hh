@@ -2,6 +2,7 @@
 #define COMMON_HH
 
 #include <bitset>
+#include <chrono>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -68,6 +69,9 @@ typedef RaptorQ::Encoder<Alignment*, Alignment*> RaptorQEncoder;
 typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
+
+const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
+        std::chrono::milliseconds(500);
 
 // A macro to disallow the copy constructor and operator= functions
 #ifndef DISALLOW_COPY_AND_ASSIGN
