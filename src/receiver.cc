@@ -87,7 +87,7 @@ int main( int argc, char *argv[] )
     }
 
     // Initialize progress bar
-    progress_t progress {decoderPaddedSize};
+    progress_t progress {decoderPaddedSize, debug_f};
     progress.show();
 
     // Start receiving symbols
