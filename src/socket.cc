@@ -236,3 +236,16 @@ void UDPSocket::set_timestamps( void )
 {
   setsockopt( SOL_SOCKET, SO_TIMESTAMPNS, int( true ) );
 }
+
+/* mark the socket as listening for incoming connections */
+void DCCPSocket::listen( const int backlog )
+{
+  SystemCall( "listen", ::listen( fd_num(), backlog ) );
+}
+
+/* accept a new incoming connection */
+DCCPSocket DCCPSocket::accept( void )
+{
+  register_read();
+  return DCCPSocket( FileDescriptor( SystemCall( "accept", ::accept( fd_num(), nullptr, nullptr ) ) ) );
+}
