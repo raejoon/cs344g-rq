@@ -107,6 +107,7 @@ void sendSymbol(DCCPSocket *socket,
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
 
+    usleep(5000);
     sendInWireFormat<WireFormat::DataPacket>(socket,
             (*symbolIterator).id(), symbol.data());
     ++symbolIterator;

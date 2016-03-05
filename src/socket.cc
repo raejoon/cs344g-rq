@@ -262,8 +262,6 @@ void DCCPSocket::send( const char* payload, int payload_len )
   if ( bytes_sent != payload_len ) {
     throw runtime_error( "datagram payload too big for send()" );
   }
-
-  printf("DCCPSocket sends %d bytes\n", bytes_sent);
 }
 
 /* receive datagram from connected address */
@@ -285,7 +283,8 @@ char* DCCPSocket::recv( void )
 
   recv_payload[ recv_len ] = '\0';
 
-  printf("DCCPSocket recvs %zu bytes\n", strlen(recv_payload));
+  // TODO fix: strlen(recv_payload) != recv_len in case we use 
+  // strlen() to get payload length in the future
   return recv_payload;
 }
 

@@ -114,15 +114,14 @@ void receive(RaptorQDecoder& decoder,
 
         if (dataPacket->header.opcode != WireFormat::Opcode::DATA_PACKET) {
             std::cerr << "Expect to receive data packet" << std::endl;
-            exit(1);
+            // exit(1);
         }
 
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
         if (DEBUG_F) {
-            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn),
-                    esi);
+        //printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
         }
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
@@ -222,7 +221,8 @@ int main(int argc, char *argv[])
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
-            open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+    //       open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+             open("demo.out", O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
     SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
     SystemCall("write", write(fd, "", 1));
     void* start = mmap(NULL, decoderPaddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
