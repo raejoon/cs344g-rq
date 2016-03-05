@@ -282,8 +282,7 @@ received_datagram DCCPSocket::recv( void )
   register_read();
 
   if ( recvlen < 0 ) {
-    perror ( "recv" );
-    exit ( 1 );
+    throw runtime_error( "recvfrom (oversized datagram)" );
   }
 
   payload[ recvlen ] = '\0';
