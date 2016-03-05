@@ -267,7 +267,7 @@ void DCCPSocket::send( const string & payload )
 }
 
 /* receive datagram from connected address */
-received_datagram DCCPSocket::recv( void )
+DCCPSocket::received_datagram DCCPSocket::recv( void )
 {
   /* call recv */
   const int MAX_DATA_SIZE = 65536;

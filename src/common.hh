@@ -102,7 +102,7 @@ generateRandom()
     return std::rand();
 }
 
-bool poll(UDPSocket* socket, UDPSocket::received_datagram& datagram)
+bool poll(DCCPSocket* socket, DCCPSocket::received_datagram& datagram)
 {
     try {
         struct pollfd ufds {socket->fd_num(), POLLIN, 0};
