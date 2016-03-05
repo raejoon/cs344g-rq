@@ -143,6 +143,8 @@ void transmit(RaptorQEncoder& encoder,
     uint32_t sourceSymbolCounter = 0;
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
+    char* datagram;
+
     for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
         const auto &block = *encoder.begin().operator++(currBlock);
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
@@ -155,7 +157,8 @@ void transmit(RaptorQEncoder& encoder,
             if (currTime > nextPollTime) {
                 // Poll to see if any ACK arrives
                 while (poll(socket, datagram)) {
-                    Tub<WireFormat::Ack> ack(datagram.payload);
+                    Tub<WireFormat::Ack> ack(datagram);
+                    free(datagram);
                     uint8_t oldCount = decodedBlocks.count();
                     decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
                     repairSymbolInterval = ack->repairSymbolInterval;
@@ -186,7 +189,8 @@ void transmit(RaptorQEncoder& encoder,
 
         // Poll to see if any ACK arrives
         while (poll(socket, datagram)) {
-            Tub<WireFormat::Ack> ack(datagram.payload);
+            Tub<WireFormat::Ack> ack(datagram);
+            free(datagram);
             uint8_t oldCount = decodedBlocks.count();
             decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
             //printf("Received ACK: %u\n", decodedBlocks.count());

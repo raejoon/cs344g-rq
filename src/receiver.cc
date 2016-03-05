@@ -66,6 +66,7 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
 
     char* datagram = socket->recv();
     new (&req) Tub<WireFormat::HandshakeReq>(datagram);
+    free(datagram);
 
     printf("Received handshake request: {connection id = %u, file name = %s, "
            "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
@@ -109,6 +110,8 @@ int receive(RaptorQDecoder& decoder,
     while (decodedBlocks.count() < decoder.blocks()) {
         char* datagram = socket->recv();
         Tub<WireFormat::DataPacket> dataPacket(datagram);
+        free(datagram);
+
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
@@ -176,6 +179,7 @@ int receive(RaptorQDecoder& decoder,
 
 void teardown(DCCPSocket*) {
     /*
+    char* datagram;
     // Clean up the udp socket receiving buffer first
     while (poll(socket.get(), datagram)) { }
     std::chrono::time_point<std::chrono::system_clock> stopTime =
