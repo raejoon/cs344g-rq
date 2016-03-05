@@ -106,8 +106,11 @@ void receive(RaptorQDecoder& decoder,
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
-    while (decodedBlocks.count() < decoder.blocks()) {
+    while (1) {
         char* datagram = socket->recv();
+        // sender has closed the connection
+        if (!datagram)
+            break;
 
         Tub<WireFormat::DataPacket> dataPacket(datagram);
         free(datagram);
@@ -179,29 +182,6 @@ void receive(RaptorQDecoder& decoder,
     printf("File decoded successfully.\n");
 }
 
-void teardown(DCCPSocket*) {
-    /*
-    char* datagram;
-    // Clean up the udp socket receiving buffer first
-    while (poll(socket.get(), datagram)) { }
-    std::chrono::time_point<std::chrono::system_clock> stopTime =
-        std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
-    while (true) {
-        if (poll(socket.get(), datagram)) {
-            stopTime = std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
-        }
-
-        if (std::chrono::system_clock::now() < stopTime) {
-            sendInWireFormat<WireFormat::Ack>(socket.get(),
-                    decodedBlocks.bitset, ~0u);
-            std::this_thread::sleep_for(HEART_BEAT_INTERVAL);
-        } else {
-            break;
-        }
-    }
-    */
-}
-
 int main(int argc, char *argv[])
 {
     if (parseArgs(argc, argv) == -1)
@@ -239,11 +219,6 @@ int main(int argc, char *argv[])
     SystemCall("truncate the padding at the end of the file",
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
-
-    /*
-    // Teardown phase: keep sending ACK until the sender becomes quite for a while
-    teardown(socket);
-    */
 
     free(socket);
     return EXIT_SUCCESS;

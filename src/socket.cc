@@ -258,6 +258,8 @@ void DCCPSocket::send( const char* payload, int payload_len )
 				payload,
 				payload_len,
 				0 ) );
+  
+
 
   if ( bytes_sent != payload_len ) {
     throw runtime_error( "datagram payload too big for send()" );
@@ -276,6 +278,11 @@ char* DCCPSocket::recv( void )
                 recv_payload, 
                 MAX_DATA_SIZE - 1,
                 0 ) );
+
+  // connection has been closed by the other side
+  if ( recv_len == 0) {
+    return NULL;
+  }
 
   if ( recv_len < 0 ) {
     throw runtime_error( "recvfrom (oversized datagram)" );
