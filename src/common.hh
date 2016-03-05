@@ -121,13 +121,12 @@ bool poll(UDPSocket* socket, UDPSocket::received_datagram& datagram)
  * TODO
  */
 template<typename T, typename... Args>
-void sendInWireFormat(UDPSocket* udpSocket,
-                      const Address& dest,
+void sendInWireFormat(DCCPSocket* dccpSocket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    udpSocket->sendbytesto(dest, raw, sizeof(T));
+    dccpSocket->send(raw);
 }
 
 /**
