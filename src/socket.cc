@@ -251,17 +251,17 @@ DCCPSocket DCCPSocket::accept( void )
 }
 
 /* send datagram to connected address */
-void DCCPSocket::send( const string & payload )
+void DCCPSocket::send( const char* payload, int payload_len )
 {
   const int bytes_sent =
     SystemCall( "send", ::send( fd_num(),
-				payload.data(),
-				payload.size(),
+				payload,
+				payload_len,
 				0 ) );
 
   register_write();
 
-  if ( size_t( bytes_sent ) != payload.size() ) {
+  if ( bytes_sent != payload_len ) {
     throw runtime_error( "datagram payload too big for send()" );
   }
 }
@@ -269,27 +269,23 @@ void DCCPSocket::send( const string & payload )
 /* receive datagram from connected address */
 DCCPSocket::received_datagram DCCPSocket::recv( void )
 {
-  /* call recv */
   const int MAX_DATA_SIZE = 65536;
-  char payload [ MAX_DATA_SIZE ];
+  char* recv_payload = new char[ MAX_DATA_SIZE ];
 
-  int recvlen = 
+  /* call recv */
+  int recv_len = 
     SystemCall( "recv", ::recv( fd_num(), 
-                &payload, 
+                recv_payload, 
                 MAX_DATA_SIZE - 1,
                 0 ) );
 
   register_read();
 
-  if ( recvlen < 0 ) {
+  if ( recv_len < 0 ) {
     throw runtime_error( "recvfrom (oversized datagram)" );
   }
 
-  payload[ recvlen ] = '\0';
-
-  received_datagram ret = { payload,
-                            recvlen };
-
-  return ret;
+  recv_payload[ recv_len ] = '\0';
+  return recv_payload;
 }
 

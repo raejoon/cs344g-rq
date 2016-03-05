@@ -63,16 +63,16 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
     uint32_t connectionId = generateRandom();
     sendInWireFormat<WireFormat::HandshakeReq>(
             socket,
-            connectionId, file.name(), file.size(), encoder.OTI_Common(),
-            encoder.OTI_Scheme_Specific());
-    printf("Sent handshake request: {connection id = %u, file size = %zu, "
-                   "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
-           connectionId, file.size(), encoder.OTI_Common(),
+            connectionId, file.name(), file.size(), 
+            encoder.OTI_Common(), encoder.OTI_Scheme_Specific());
+    printf("Sent handshake request: {connection id = %u, file name = %s, "
+           "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           connectionId, file.name(), file.size(), encoder.OTI_Common(),
            encoder.OTI_Scheme_Specific());
 
     // Wait for handshake response
-    DCCPSocket::received_datagram recvDatagram = socket->recv();
-    Tub<WireFormat::HandshakeResp> resp(recvDatagram.payload);
+    char* datagram = socket->recv();
+    Tub<WireFormat::HandshakeResp> resp(datagram);
     // assert(resp.size() == recvDatagram.recvlen);
     if (resp->header.opcode != WireFormat::Opcode::HANDSHAKE_RESP) {
         std::cerr << "Bad handshake response" << std::endl;
@@ -142,7 +142,6 @@ void transmit(RaptorQEncoder& encoder,
             std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     uint32_t sourceSymbolCounter = 0;
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
-    DCCPSocket::received_datagram datagram {0, 0};
 
     for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
         const auto &block = *encoder.begin().operator++(currBlock);

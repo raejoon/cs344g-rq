@@ -95,11 +95,6 @@ private:
   {}
 
 public:
-  struct received_datagram {
-    char* payload;
-    int   recvlen;
-  };
-
   DCCPSocket() : Socket( AF_INET6, SOCK_DCCP ) {}
 
   /* mark the socket as listening for incoming connections */
@@ -109,10 +104,10 @@ public:
   DCCPSocket accept( void );
 
   /* send datagram to connected address */
-  void send( const std::string & payload );
+  void send( const char* payload, int payload_len );
 
   /* receive datagram from connected address */
-  received_datagram recv( void );
+  char* recv( void );
 };
 
 #endif /* SOCKET_HH */

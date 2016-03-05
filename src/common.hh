@@ -126,7 +126,7 @@ void sendInWireFormat(DCCPSocket* dccpSocket,
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    dccpSocket->send(raw);
+    dccpSocket->send(raw, sizeof(T));
 }
 
 /**

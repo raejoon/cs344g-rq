@@ -64,8 +64,8 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     DCCPSocket remoteSocket = localSocket->accept();
     DCCPSocket* socket {&remoteSocket};
 
-    DCCPSocket::received_datagram datagram = socket->recv();
-    req = Tub<WireFormat::HandshakeReq>(datagram.payload);
+    char* datagram = socket->recv();
+    new (&req) Tub<WireFormat::HandshakeReq>(datagram);
 
     printf("Received handshake request: {connection id = %u, file name = %s, "
            "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
@@ -107,8 +107,8 @@ int receive(RaptorQDecoder& decoder,
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     while (decodedBlocks.count() < decoder.blocks()) {
-        DCCPSocket::received_datagram datagram = socket->recv();
-        Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
+        char* datagram = socket->recv();
+        Tub<WireFormat::DataPacket> dataPacket(datagram);
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
