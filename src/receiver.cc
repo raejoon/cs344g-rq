@@ -81,8 +81,7 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     return socket;
 }
 
-template<typename Alignment>
-int receive(RaptorQDecoder& decoder,
+void receive(RaptorQDecoder& decoder,
             DCCPSocket* socket,
             void* recvfile_start)
 {
@@ -109,8 +108,15 @@ int receive(RaptorQDecoder& decoder,
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     while (decodedBlocks.count() < decoder.blocks()) {
         char* datagram = socket->recv();
+        printf("recving %zu\n", strlen(datagram));
+
         Tub<WireFormat::DataPacket> dataPacket(datagram);
         free(datagram);
+
+        if (dataPacket->header.opcode != WireFormat::Opcode::DATA_PACKET) {
+            std::cerr << "Expect to receive data packet" << std::endl;
+            exit(1);
+        }
 
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
@@ -173,8 +179,6 @@ int receive(RaptorQDecoder& decoder,
 
     assert(decodedBlocks.count() == decoder.blocks());
     printf("File decoded successfully.\n");
-
-    return 0;
 }
 
 void teardown(DCCPSocket*) {
@@ -205,12 +209,11 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv) == -1)
         return EXIT_FAILURE;
 
+    DEBUG_F = 1;
     // Wait for handshake request and send back handshake response
     Tub<WireFormat::HandshakeReq> req;
-    // DCCPSocket* socket = respondHandshake(req);
-    respondHandshake(req);
+    DCCPSocket* socket = respondHandshake(req);
 
-    /*
     // Set up the RaptorQ decoder
     RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
     size_t decoderPaddedSize = 0;
@@ -238,6 +241,7 @@ int main(int argc, char *argv[])
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
 
+    /*
     // Teardown phase: keep sending ACK until the sender becomes quite for a while
     teardown(socket);
     */

@@ -261,6 +261,8 @@ void DCCPSocket::send( const char* payload, int payload_len )
 
   register_write();
 
+  printf("DCCPSocket sends %d bytes\n", payload_len);
+
   if ( bytes_sent != payload_len ) {
     throw runtime_error( "datagram payload too big for send()" );
   }
@@ -280,6 +282,8 @@ char* DCCPSocket::recv( void )
                 0 ) );
 
   register_read();
+
+  printf("DCCPSocket recvs %d bytes\n", recv_len);
 
   if ( recv_len < 0 ) {
     throw runtime_error( "recvfrom (oversized datagram)" );

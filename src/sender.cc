@@ -7,6 +7,8 @@
 #include "wire_format.hh"
 #include "progress.hh"
 
+int DEBUG_F = 1;
+
 void printUsage(char *command) 
 {
     std::cerr << "Usage: " << command << " HOST [PORT] FILE" << std::endl;
@@ -50,7 +52,6 @@ int parseArgs(int argc,
  *      A reference to a blocking DCCP socket if the handshake procedure
  *      succeeds; nullptr otherwise.
  */
-template<typename Alignment>
 DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
                               const std::string& host,
                               const std::string& port,
@@ -97,14 +98,14 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
 void congestionControl() {
     // TODO(Francis): implement congestion control logic here
     // Sleep-based congestion control :p
-//    usleep(1000);
+    usleep(5000);
 }
 
 /**
- * Send a single symbol to the given UDP socket.
+ * Send a single symbol to the given DCCP socket.
  *
  * \param[in]
- *      The UDP socket.
+ *      The DCCP socket.
  * \param[in,out] symbolIterator
  *      A symbol iterator referencing the symbol about to send; the position
  *      of the iterator will be advanced by one after this function is called.
@@ -118,6 +119,10 @@ void sendSymbol(DCCPSocket *socket,
 
     // Wait until the congestion controller gives us a pass
     congestionControl();
+
+    std::cout << "symbol id: " << (*symbolIterator).id()
+              << " symbol data: " << symbol.data() << std::endl;
+
     sendInWireFormat<WireFormat::DataPacket>(socket,
             (*symbolIterator).id(), symbol.data());
     ++symbolIterator;
@@ -127,7 +132,7 @@ void transmit(RaptorQEncoder& encoder,
               DCCPSocket* socket)
 {
     // Initialize progress bar
-    progress_t progress {encoder.blocks()};
+    progress_t progress {encoder.blocks(), DEBUG_F};
     progress.show();
 
     // Set up repair symbol iterators of all blocks
@@ -150,6 +155,8 @@ void transmit(RaptorQEncoder& encoder,
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
+            printf("sending %d\n", esi);
+
             sendSymbol(socket, sourceSymbolIter);
             sourceSymbolCounter++;
 
@@ -190,7 +197,6 @@ void transmit(RaptorQEncoder& encoder,
         // Poll to see if any ACK arrives
         while (poll(socket, datagram)) {
             Tub<WireFormat::Ack> ack(datagram);
-            free(datagram);
             uint8_t oldCount = decodedBlocks.count();
             decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
             //printf("Received ACK: %u\n", decodedBlocks.count());
@@ -202,7 +208,6 @@ void transmit(RaptorQEncoder& encoder,
 /**
  * Instantiates a RaptorQ encoder with an (near) optimal setting.
  */
-template<typename Alignment>
 std::unique_ptr<RaptorQEncoder> getEncoder(FileWrapper<Alignment>& file)
 {
     int numOfSymbolsPerBlock = 64;
@@ -249,10 +254,8 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
-    /*
     // Start transmission
     transmit(*encoder, socket);
-    */
 
     return EXIT_SUCCESS;
 }

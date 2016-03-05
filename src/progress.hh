@@ -48,7 +48,7 @@ struct progress_t {
         if (debug) return;
 
         float fraction = completed * 1.0f / workSize;
-        int barwidth = 70;
+        int barwidth = 50;
         std::cout <<"[";
         int pos = barwidth * fraction;
         for (int i = 0; i < barwidth; ++i) {
