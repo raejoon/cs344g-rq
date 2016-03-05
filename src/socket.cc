@@ -249,3 +249,48 @@ DCCPSocket DCCPSocket::accept( void )
   register_read();
   return DCCPSocket( FileDescriptor( SystemCall( "accept", ::accept( fd_num(), nullptr, nullptr ) ) ) );
 }
+
+/* send datagram to connected address */
+void DCCPSocket::send( const string & payload )
+{
+  const int bytes_sent =
+    SystemCall( "send", ::send( fd_num(),
+				payload.data(),
+				payload.size(),
+				0 ) );
+
+  register_write();
+
+  if ( size_t( bytes_sent ) != payload.size() ) {
+    throw runtime_error( "datagram payload too big for send()" );
+  }
+}
+
+/* receive datagram from connected address */
+received_datagram DCCPSocket::recv( void )
+{
+  /* call recv */
+  const int MAX_DATA_SIZE = 65536;
+  char payload [ MAX_DATA_SIZE ];
+
+  int recvlen = 
+    SystemCall( "recv", ::recv( fd_num(), 
+                &payload, 
+                MAX_DATA_SIZE - 1,
+                0 ) );
+
+  register_read();
+
+  if ( recvlen < 0 ) {
+    perror ( "recv" );
+    exit ( 1 );
+  }
+
+  payload[ recvlen ] = '\0';
+
+  received_datagram ret = { payload,
+                            recvlen };
+
+  return ret;
+}
+

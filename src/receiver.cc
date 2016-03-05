@@ -42,21 +42,31 @@ int checkArgs(int argc, char *argv[]) {
     return debug_f;
 }
 
+DCCPSocket* respondHandshake() 
+{
+    DCCPSocket* localSocket {new DCCPSocket};
+    try {
+        localSocket->bind(Address("0", 6330));
+    }
+    catch (unix_error e) {
+        std::cerr << "Port 6330 is already used. ";
+        std::cerr << "Picking a random port..." << std::endl;
+        localSocket->bind(Address("0", 0));
+    }
+    printf("%s\n", localSocket->local_address().to_string().c_str());
+    localSocket->listen();
+
+    DCCPSocket* socket {&localSocket->accept()};
+    return socket;
+}
+
 int main( int argc, char *argv[] )
 {
     int debug_f;
     if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
 
     // Wait for handshake request and send back handshake response
-    std::unique_ptr<UDPSocket> socket{new UDPSocket};
-    try {
-        socket->bind(Address("0", 6330));
-    }
-    catch (unix_error e) {
-        std::cerr << "Port 6330 is already used. Picking a random port..." << std::endl;
-        socket->bind(Address("0", 0));
-    }
-    printf("%s\n", socket->local_address().to_string().c_str());
+    DCCPSocket* socket = respondHandshake();
 
     UDPSocket::received_datagram datagram = socket->recv();
     Address senderAddr = datagram.source_address;

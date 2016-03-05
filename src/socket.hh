@@ -90,9 +90,16 @@ class DCCPSocket : public Socket
 {
 private:
   /* private constructor used by accept() */
-  DCCPSocket( FileDescriptor && fd ) : Socket( std::move( fd ), AF_INET6, SOCK_DCCP ) {}
+  DCCPSocket( FileDescriptor && fd ) 
+    : Socket( std::move( fd ), AF_INET6, SOCK_DCCP ) 
+  {}
 
 public:
+  struct received_datagram {
+    char* payload;
+    int   recvlen;
+  };
+
   DCCPSocket() : Socket( AF_INET6, SOCK_DCCP ) {}
 
   /* mark the socket as listening for incoming connections */
@@ -100,6 +107,12 @@ public:
 
   /* accept a new incoming connection */
   DCCPSocket accept( void );
+
+  /* send datagram to connected address */
+  void send( const std::string & payload );
+
+  /* receive datagram from connected address */
+  received_datagram recv( void );
 };
 
 #endif /* SOCKET_HH */
