@@ -72,17 +72,9 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     return socket;
 }
 
-int main( int argc, char *argv[] )
+void receive(RaptorQDecoder& decoder,
+             DCCPSocket* socket) 
 {
-    int debug_f;
-    if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
-
-    // Wait for handshake request and send back handshake response
-    Tub<WireFormat::HandshakeReq> req;
-    DCCPSocket* socket = respondHandshake(req);
-
-    // Set up the RaptorQ decoder
-    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
     size_t decoderPaddedSize = 0;
     for (int i = 0; i < decoder.blocks(); i++) {
         decoderPaddedSize += decoder.block_size(i);
@@ -108,11 +100,11 @@ int main( int argc, char *argv[] )
     blockStart[0] = reinterpret_cast<Alignment*>(start);
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
         blockStart[sbn + 1] = blockStart[sbn] +
-                decoder.block_size(sbn) / ALIGNMENT_SIZE;
+            decoder.block_size(sbn) / ALIGNMENT_SIZE;
     }
 
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
-            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
+        std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     Bitmask256 decodedBlocks;
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
@@ -125,7 +117,7 @@ int main( int argc, char *argv[] )
 
         if (debug_f) {
             printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn),
-                   esi);
+                    esi);
         }
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
@@ -135,8 +127,8 @@ int main( int argc, char *argv[] )
             // Send heartbeat ACK
             if (debug_f) printf("Sent Heartbeat ACK\n");
             sendInWireFormat<WireFormat::Ack>(socket.get(), senderAddr,
-                                              decodedBlocks.bitset,
-                                              repairSymbolInterval);
+                    decodedBlocks.bitset,
+                    repairSymbolInterval);
             nextAckTime = currTime + HEART_BEAT_INTERVAL;
         }
 
@@ -165,18 +157,36 @@ int main( int argc, char *argv[] )
                 repairSymbolInterval = ~0u;
             } else {
                 packetLossRate = 1.0f -
-                        numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
+                    numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
                 assert(packetLossRate > 0.0f);
                 repairSymbolInterval = static_cast<uint32_t >(std::min(
-                        std::ceil(1.0f / packetLossRate - 1),
-                        1.0f * (((uint32_t)~0u) - 1)));
+                            std::ceil(1.0f / packetLossRate - 1),
+                            1.0f * (((uint32_t)~0u) - 1)));
             }
             if (debug_f) {
                 printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
-                       packetLossRate, repairSymbolInterval);
+                        packetLossRate, repairSymbolInterval);
             }
         }
     }
+
+}
+
+int main( int argc, char *argv[] )
+{
+    int debug_f;
+    if ((debug_f = checkArgs(argc, argv)) == -1)
+        return EXIT_FAILURE;
+
+    // Wait for handshake request and send back handshake response
+    Tub<WireFormat::HandshakeReq> req;
+    DCCPSocket* socket = respondHandshake(req);
+
+    // Set up the RaptorQ decoder
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
+
+    // Receive file
+    receive(decoder, socket);
 
     SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
     SystemCall("munmap", munmap(start, decoderPaddedSize));
