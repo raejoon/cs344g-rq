@@ -80,14 +80,16 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     return socket;
 }
 
+template<typename Alignment>
 int receive(RaptorQDecoder& decoder,
-            DCCPSocket* socket)
+            DCCPSocket* socket,
+            void* recvfile_start)
 {
     // Start receiving symbols
     size_t decoderPaddedSize = 0;
 
     std::vector<Alignment*> blockStart(decoder.blocks() + 1);
-    blockStart[0] = reinterpret_cast<Alignment*>(start);
+    blockStart[0] = reinterpret_cast<Alignment*>(recvfile_start);
     for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
         blockStart[sbn + 1] = blockStart[sbn] +
             decoder.block_size(sbn) / ALIGNMENT_SIZE;
@@ -172,7 +174,7 @@ int receive(RaptorQDecoder& decoder,
     return 0;
 }
 
-void teardown(DCCPSocket* socket) {
+void teardown(DCCPSocket*) {
     /*
     // Clean up the udp socket receiving buffer first
     while (poll(socket.get(), datagram)) { }
@@ -224,7 +226,7 @@ int main(int argc, char *argv[])
     }
 
     // Receive file
-    receive(req, socket);
+    receive(decoder, socket, start);
 
     SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
     SystemCall("munmap", munmap(start, decoderPaddedSize));

@@ -52,9 +52,9 @@ int parseArgs(int argc,
  */
 template<typename Alignment>
 DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
-                                             const std::string& host,
-                                             const std::string& port,
-                                             const FileWrapper<Alignment>& file)
+                              const std::string& host,
+                              const std::string& port,
+                              const FileWrapper<Alignment>& file)
 {
     DCCPSocket* socket {new DCCPSocket};
     socket->connect(Address(host, port));
