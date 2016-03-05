@@ -7,6 +7,38 @@
 #include "wire_format.hh"
 #include "progress.hh"
 
+void printUsage(char *command) {
+    std::cerr << "Usage: " << command << " HOST [PORT] FILE" << std::endl;
+}
+
+int parseArgs(int argc,
+              char *argv[],
+              std::string& host,
+              std::string& port,
+              char*& filename)
+{
+    /* check the command-line arguments */
+    if ( argc < 1 ) { abort(); } /* for sticklers */
+
+    /* fetch command-line arguments */
+    if ( argc == 3 ) {
+        host = argv[1];
+        port = "6330";
+        filename = argv[2];
+    }
+    else if ( argc == 4 ) {
+        host = argv[1];
+        port = argv[2];
+        filename = argv[3];
+    }
+    else {
+        printUsage(argv[0]);
+        return -1;
+    }
+
+    return 0;
+}
+
 /**
  * Starts the handshake procedure with the receiver. This method needs to
  * handle retries automatically in the face of lost handshake request and/or
@@ -185,29 +217,14 @@ std::unique_ptr<RaptorQEncoder> getEncoder(FileWrapper<Alignment>& file)
 
 int main(int argc, char *argv[])
 {
-    /* check the command-line arguments */
-    if ( argc < 1 ) { abort(); } /* for sticklers */
-
-    char *filename;
     std::string host, port;
+    char *filename;
 
-    /* fetch command-line arguments */
-    if ( argc == 3 ) {
-        filename = argv[2];
-        host = argv[1];
-        port = "6330";
-    }
-    else if ( argc == 4 ) {
-        filename = argv[3];
-        host = argv[1];
-        port = argv[2];
-    }
-    else {
-        std::cerr << "Usage: " << argv[ 0 ] << " HOST [PORT] FILE" << std::endl;
+    if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
-    }
 
     // Read the file to transfer
+    /*
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
 
@@ -227,6 +244,7 @@ int main(int argc, char *argv[])
 
     // Start transmission
     transmit(*encoder, socket.get());
+    */
 
     return EXIT_SUCCESS;
 }

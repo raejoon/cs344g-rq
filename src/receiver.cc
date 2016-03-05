@@ -38,10 +38,11 @@ int checkArgs(int argc, char *argv[]) {
         }
     }
     if ( optind != argc ) {
-      printUsage(argv[0]);
+        printUsage(argv[0]);
         return -1;
     }
-    return DEBUG_F;
+
+    return 0;
 }
 
 DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
@@ -184,9 +185,10 @@ void receive(RaptorQDecoder& decoder,
 
 int main( int argc, char *argv[] )
 {
-    if ((DEBUG_F = checkArgs(argc, argv)) == -1)
+    if (checkArgs(argc, argv) == -1)
         return EXIT_FAILURE;
 
+    /*
     // Wait for handshake request and send back handshake response
     Tub<WireFormat::HandshakeReq> req;
     DCCPSocket* socket = respondHandshake(req);
@@ -199,7 +201,6 @@ int main( int argc, char *argv[] )
 
     // Teardown phase: keep sending ACK until the sender becomes quite for a while
 
-    /*
     // Clean up the udp socket receiving buffer first
     while (poll(socket.get(), datagram)) { }
     std::chrono::time_point<std::chrono::system_clock> stopTime =
@@ -218,5 +219,6 @@ int main( int argc, char *argv[] )
         }
     }
     */
+
     return EXIT_SUCCESS;
 }
