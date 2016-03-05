@@ -9,6 +9,8 @@
 const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
         2 * HEART_BEAT_INTERVAL;
 
+int DEBUG_F;
+
 void printUsage(char *command) {
     std::cerr << "Usage: " << command << " [-dh]" << std::endl;
     std::cerr << "\t-h: help" << std::endl;
@@ -20,12 +22,12 @@ int checkArgs(int argc, char *argv[]) {
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
     // check options
-    int debug_f = 0;
+    DEBUG_F = 0;
     int c = 0;
     while ((c = getopt(argc, argv, "dh")) != -1) {
         switch (c) {
             case 'd':
-                debug_f = 1;
+                DEBUG_F = 1;
                 break;
             case 'h':
             case '?':
@@ -39,7 +41,7 @@ int checkArgs(int argc, char *argv[]) {
       printUsage(argv[0]);
         return -1;
     }
-    return debug_f;
+    return DEBUG_F;
 }
 
 DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
@@ -92,7 +94,7 @@ void receive(RaptorQDecoder& decoder,
     }
 
     // Initialize progress bar
-    progress_t progress {decoderPaddedSize, debug_f};
+    progress_t progress {decoderPaddedSize, DEBUG_F};
     progress.show();
 
     // Start receiving symbols
@@ -115,7 +117,7 @@ void receive(RaptorQDecoder& decoder,
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
-        if (debug_f) {
+        if (DEBUG_F) {
             printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn),
                     esi);
         }
@@ -125,7 +127,7 @@ void receive(RaptorQDecoder& decoder,
         auto currTime = std::chrono::system_clock::now();
         if (currTime > nextAckTime) {
             // Send heartbeat ACK
-            if (debug_f) printf("Sent Heartbeat ACK\n");
+            if (DEBUG_F) printf("Sent Heartbeat ACK\n");
             sendInWireFormat<WireFormat::Ack>(socket.get(), senderAddr,
                     decodedBlocks.bitset,
                     repairSymbolInterval);
@@ -146,7 +148,7 @@ void receive(RaptorQDecoder& decoder,
             progress.update(decoder.block_size(sbn));
 
             // send ACK for block sbn
-            if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
+            if (DEBUG_F) printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
 
             // Update the repair symbol transmission interval to be sent in the
@@ -163,19 +165,26 @@ void receive(RaptorQDecoder& decoder,
                             std::ceil(1.0f / packetLossRate - 1),
                             1.0f * (((uint32_t)~0u) - 1)));
             }
-            if (debug_f) {
+            if (DEBUG_F) {
                 printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
                         packetLossRate, repairSymbolInterval);
             }
         }
     }
 
+    SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
+    SystemCall("munmap", munmap(start, decoderPaddedSize));
+    SystemCall("truncate the padding at the end of the file",
+            ftruncate(fd, req->fileSize));
+    SystemCall("close fd", close(fd));
+
+    assert(decodedBlocks.count() == decoder.blocks());
+    printf("File decoded successfully.\n");
 }
 
 int main( int argc, char *argv[] )
 {
-    int debug_f;
-    if ((debug_f = checkArgs(argc, argv)) == -1)
+    if ((DEBUG_F = checkArgs(argc, argv)) == -1)
         return EXIT_FAILURE;
 
     // Wait for handshake request and send back handshake response
@@ -188,17 +197,9 @@ int main( int argc, char *argv[] )
     // Receive file
     receive(decoder, socket);
 
-    SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
-    SystemCall("munmap", munmap(start, decoderPaddedSize));
-    SystemCall("truncate the padding at the end of the file",
-            ftruncate(fd, req->fileSize));
-    SystemCall("close fd", close(fd));
-
-    assert(decodedBlocks.count() == decoder.blocks());
-    printf("File decoded successfully.\n");
-
     // Teardown phase: keep sending ACK until the sender becomes quite for a while
 
+    /*
     // Clean up the udp socket receiving buffer first
     while (poll(socket.get(), datagram)) { }
     std::chrono::time_point<std::chrono::system_clock> stopTime =
@@ -216,6 +217,6 @@ int main( int argc, char *argv[] )
             break;
         }
     }
-
+    */
     return EXIT_SUCCESS;
 }
