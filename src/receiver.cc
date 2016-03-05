@@ -42,7 +42,7 @@ int checkArgs(int argc, char *argv[]) {
     return debug_f;
 }
 
-DCCPSocket* respondHandshake() 
+DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
 {
     DCCPSocket* localSocket {new DCCPSocket};
     try {
@@ -57,6 +57,18 @@ DCCPSocket* respondHandshake()
     localSocket->listen();
 
     DCCPSocket* socket {&localSocket->accept()};
+
+    DCCPSocket::received_datagram datagram = socket->recv();
+    req = Tub<WireFormat::HandshakeReq>(datagram.payload);
+
+    printf("Recevied handshake request: {connection Id = %u, file name = %s, "
+           "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           req->connectionId, req->fileName, req->fileSize, req->otiCommon,
+           req->otiScheme);
+
+    sendInWireFormat<WireFormat::HandshakeResp>(
+        socket, uint32_t(req->connectionId));
+
     return socket;
 }
 
@@ -66,17 +78,8 @@ int main( int argc, char *argv[] )
     if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
 
     // Wait for handshake request and send back handshake response
-    DCCPSocket* socket = respondHandshake();
-
-    UDPSocket::received_datagram datagram = socket->recv();
-    Address senderAddr = datagram.source_address;
-    Tub<WireFormat::HandshakeReq> req(datagram.payload);
-    printf("Recevied handshake request: {connection Id = %u, file name = %s, "
-            "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
-            req->connectionId, req->fileName, req->fileSize, req->otiCommon,
-            req->otiScheme);
-    sendInWireFormat<WireFormat::HandshakeResp>(
-            socket.get(), senderAddr, uint32_t(req->connectionId));
+    Tub<WireFormat::HandshakeReq> req;
+    DCCPSocket* socket = respondHandshake(req);
 
     // Set up the RaptorQ decoder
     RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
