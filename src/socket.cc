@@ -246,26 +246,24 @@ void DCCPSocket::listen( const int backlog )
 /* accept a new incoming connection */
 DCCPSocket DCCPSocket::accept( void )
 {
-  register_read();
-  return DCCPSocket( FileDescriptor( SystemCall( "accept", ::accept( fd_num(), nullptr, nullptr ) ) ) );
+  return DCCPSocket( FileDescriptor( SystemCall( "accept", ::accept( fd_num(), 
+                                                 nullptr, nullptr ) ) ) );
 }
 
 /* send datagram to connected address */
 void DCCPSocket::send( const char* payload, int payload_len )
 {
-  const int bytes_sent =
+  int bytes_sent =
     SystemCall( "send", ::send( fd_num(),
 				payload,
 				payload_len,
 				0 ) );
 
-  register_write();
-
-  printf("DCCPSocket sends %d bytes\n", payload_len);
-
   if ( bytes_sent != payload_len ) {
     throw runtime_error( "datagram payload too big for send()" );
   }
+
+  printf("DCCPSocket sends %d bytes\n", bytes_sent);
 }
 
 /* receive datagram from connected address */
@@ -281,15 +279,13 @@ char* DCCPSocket::recv( void )
                 MAX_DATA_SIZE - 1,
                 0 ) );
 
-  register_read();
-
-  printf("DCCPSocket recvs %d bytes\n", recv_len);
-
   if ( recv_len < 0 ) {
     throw runtime_error( "recvfrom (oversized datagram)" );
   }
 
   recv_payload[ recv_len ] = '\0';
+
+  printf("DCCPSocket recvs %zu bytes\n", strlen(recv_payload));
   return recv_payload;
 }
 

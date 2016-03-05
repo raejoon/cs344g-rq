@@ -74,6 +74,8 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
     // Wait for handshake response
     char* datagram = socket->recv();
     Tub<WireFormat::HandshakeResp> resp(datagram);
+    free(datagram);
+
     // assert(resp.size() == recvDatagram.recvlen);
     if (resp->header.opcode != WireFormat::Opcode::HANDSHAKE_RESP) {
         std::cerr << "Bad handshake response" << std::endl;
@@ -87,18 +89,6 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
     }
 
     return nullptr;
-}
-
-/**
- * Invokes congestion control algorithm.
- *
- * This method is now called before sending each symbol and blocks until the
- * congestion controller says it's OK to send. This is subject to change.
- */
-void congestionControl() {
-    // TODO(Francis): implement congestion control logic here
-    // Sleep-based congestion control :p
-    usleep(5000);
 }
 
 /**
@@ -116,12 +106,6 @@ void sendSymbol(DCCPSocket *socket,
     static RaptorQSymbol symbol {0};
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
-
-    // Wait until the congestion controller gives us a pass
-    congestionControl();
-
-    std::cout << "symbol id: " << (*symbolIterator).id()
-              << " symbol data: " << symbol.data() << std::endl;
 
     sendInWireFormat<WireFormat::DataPacket>(socket,
             (*symbolIterator).id(), symbol.data());
@@ -155,8 +139,6 @@ void transmit(RaptorQEncoder& encoder,
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
-            printf("sending %d\n", esi);
-
             sendSymbol(socket, sourceSymbolIter);
             sourceSymbolCounter++;
 
@@ -257,5 +239,6 @@ int main(int argc, char *argv[])
     // Start transmission
     transmit(*encoder, socket);
 
+    free(socket);
     return EXIT_SUCCESS;
 }

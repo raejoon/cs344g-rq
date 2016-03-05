@@ -11,7 +11,6 @@
 #include "socket.hh"
 
 /**
- * TODO: confirm it?
  * The recommended setting of parameter Al in rfc6330 is 32.
  */
 typedef uint32_t Alignment;
@@ -121,12 +120,12 @@ bool poll(DCCPSocket* socket, char*& datagram)
  * TODO
  */
 template<typename T, typename... Args>
-void sendInWireFormat(DCCPSocket* dccpSocket,
+void sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    dccpSocket->send(raw, sizeof(T));
+    socket->send(raw, sizeof(T));
 }
 
 /**

@@ -62,7 +62,7 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
 
     localSocket->listen();
     DCCPSocket remoteSocket = localSocket->accept();
-    DCCPSocket* socket {&remoteSocket};
+    DCCPSocket* socket = new DCCPSocket(std::move(remoteSocket)); 
 
     char* datagram = socket->recv();
     new (&req) Tub<WireFormat::HandshakeReq>(datagram);
@@ -82,8 +82,8 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
 }
 
 void receive(RaptorQDecoder& decoder,
-            DCCPSocket* socket,
-            void* recvfile_start)
+             DCCPSocket* socket,
+             void* recvfile_start)
 {
     // Start receiving symbols
     size_t decoderPaddedSize = 0;
@@ -108,7 +108,6 @@ void receive(RaptorQDecoder& decoder,
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
     while (decodedBlocks.count() < decoder.blocks()) {
         char* datagram = socket->recv();
-        printf("recving %zu\n", strlen(datagram));
 
         Tub<WireFormat::DataPacket> dataPacket(datagram);
         free(datagram);
@@ -246,5 +245,6 @@ int main(int argc, char *argv[])
     teardown(socket);
     */
 
+    free(socket);
     return EXIT_SUCCESS;
 }
