@@ -123,13 +123,13 @@ void receive(RaptorQDecoder& decoder,
         if (!datagram)
             break;
 
-        Tub<WireFormat::DataPacket> dataPacket(datagram);
-        free(datagram);
-
-        if (dataPacket->header.opcode != WireFormat::Opcode::DATA_PACKET) {
-            std::cerr << "Expect to receive data packet" << std::endl;
-            // exit(1);
+        if (WireFormat::getOpcode(datagram) != WireFormat::Opcode::DATA_PACKET) {
+          std::cerr << "Expect to receive handshake response" << std::endl;
+          exit(EXIT_FAILURE);
         }
+
+        Tub<WireFormat::DataPacket> dataPacket(datagram);
+        free(datagram); 
 
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
