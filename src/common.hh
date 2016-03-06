@@ -101,7 +101,7 @@ generateRandom()
     return std::rand();
 }
 
-bool poll(DCCPSocket* socket, char*& datagram)
+bool ack_poll(DCCPSocket* socket, char*& datagram)
 {
     try {
         struct pollfd ufds {socket->fd_num(), POLLIN, 0};

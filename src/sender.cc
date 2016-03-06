@@ -108,9 +108,21 @@ void sendSymbol(DCCPSocket *socket,
     (*symbolIterator)(begin, symbol.end());
 
     usleep(5000);
-    sendInWireFormat<WireFormat::DataPacket>(socket,
-            (*symbolIterator).id(), symbol.data());
-    ++symbolIterator;
+
+    struct pollfd ufds {socket->fd_num(), POLLOUT, 0};
+    int rv = SystemCall("poll", poll(&ufds, 1, 30000));
+    if (rv == -1) {
+        perror("poll");
+    } else if (rv == 0) {
+        printf("Unable to send in 30 seconds! Exit now.");
+        exit(EXIT_FAILURE);
+    } else {
+        if (ufds.revents & POLLOUT) {
+            sendInWireFormat<WireFormat::DataPacket>(socket,
+                    (*symbolIterator).id(), symbol.data());
+            ++symbolIterator;
+        }
+    }
 }
 
 void transmit(RaptorQEncoder& encoder,
@@ -146,7 +158,7 @@ void transmit(RaptorQEncoder& encoder,
             auto currTime = std::chrono::system_clock::now();
             if (currTime > nextPollTime) {
                 // Poll to see if any ACK arrives
-                while (poll(socket, datagram)) {
+                while (ack_poll(socket, datagram)) {
                     Tub<WireFormat::Ack> ack(datagram);
                     free(datagram);
                     uint8_t oldCount = decodedBlocks.count();
@@ -178,7 +190,7 @@ void transmit(RaptorQEncoder& encoder,
         }
 
         // Poll to see if any ACK arrives
-        while (poll(socket, datagram)) {
+        while (ack_poll(socket, datagram)) {
             Tub<WireFormat::Ack> ack(datagram);
             uint8_t oldCount = decodedBlocks.count();
             decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
