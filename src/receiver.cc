@@ -66,7 +66,10 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     DCCPSocket* socket = new DCCPSocket(std::move(remoteSocket)); 
 
     // Wait for handshake request
-    char* datagram = socket->recv();
+    char* datagram;
+    while (!recv_poll(socket)) {}
+    datagram = socket->recv(); 
+    
     if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_REQ) {
         std::cerr << "Expect to receive handshake request" << std::endl;
         exit(EXIT_FAILURE);
@@ -118,7 +121,9 @@ void receive(RaptorQDecoder& decoder,
     char* datagram;
 
     while (1) {
-        datagram = socket->recv();
+        while (!recv_poll(socket)) {}
+        datagram = socket->recv(); 
+
         // sender has closed the connection
         if (!datagram)
             break;

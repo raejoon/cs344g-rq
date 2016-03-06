@@ -101,7 +101,9 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
  *      of the iterator will be advanced by one after this function is called.
  */
 void sendSymbol(DCCPSocket *socket,
-                RaptorQSymbolIterator &symbolIterator)
+                RaptorQSymbolIterator &symbolIterator,
+                Bitmask256 &decodedBlocks,
+                progress_t &progress)
 {
     static RaptorQSymbol symbol {0};
     auto begin = symbol.begin();
@@ -109,18 +111,39 @@ void sendSymbol(DCCPSocket *socket,
 
     usleep(5000);
 
-    struct pollfd ufds {socket->fd_num(), POLLOUT, 0};
-    int rv = SystemCall("poll", poll(&ufds, 1, 30000));
-    if (rv == -1) {
-        perror("poll");
-    } else if (rv == 0) {
-        printf("Unable to send in 30 seconds! Exit now.");
-        exit(EXIT_FAILURE);
-    } else {
-        if (ufds.revents & POLLOUT) {
-            sendInWireFormat<WireFormat::DataPacket>(socket,
-                    (*symbolIterator).id(), symbol.data());
-            ++symbolIterator;
+    while (1) {
+        int rv = SystemCall("poll", poll(&ufds, 1, 30000));
+        if (rv == -1) {
+            perror("poll");
+            exit(EXIT_FAILURE);
+        } else if (rv == 0) {
+            printf("Unable to send or receive in 30 seconds!");
+            exit(EXIT_FAILURE);
+        } else {
+            if (ufds.revents & POLLIN) {
+                if (DEBUG_F)
+                    printf("Poll ready to recv!\n");
+
+                char* datagram = socket->recv();
+                if (WireFormat::getOpcode(datagram) != WireFormat::ACK) {
+                    std::cerr << "Expect to receive handshake request" << std::endl;
+                } else {
+                    Tub<WireFormat::Ack> ack(datagram);
+                    uint8_t oldCount = decodedBlocks.count();
+                    decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+                    progress.update(decodedBlocks.count() - oldCount);
+                }
+            }
+
+            if (ufds.revents & POLLOUT) {
+                if (DEBUG_F)
+                    printf("Poll ready to send!\n");
+
+                sendInWireFormat<WireFormat::DataPacket>(socket,
+                        (*symbolIterator).id(), symbol.data());
+                ++symbolIterator;
+                break;
+            }
         }
     }
 }
@@ -140,41 +163,22 @@ void transmit(RaptorQEncoder& encoder,
 
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
-    std::chrono::time_point<std::chrono::system_clock> nextPollTime =
-            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     uint32_t sourceSymbolCounter = 0;
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
-
-    char* datagram;
 
     for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
         const auto &block = *encoder.begin().operator++(currBlock);
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
-            sendSymbol(socket, sourceSymbolIter);
+            sendSymbol(socket, sourceSymbolIter, decodedBlocks, progress);
             sourceSymbolCounter++;
-
-            auto currTime = std::chrono::system_clock::now();
-            if (currTime > nextPollTime) {
-                // Poll to see if any ACK arrives
-                while (ack_poll(socket, datagram)) {
-                    Tub<WireFormat::Ack> ack(datagram);
-                    free(datagram);
-                    uint8_t oldCount = decodedBlocks.count();
-                    decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-                    repairSymbolInterval = ack->repairSymbolInterval;
-                    //printf("Received ACK: %u\n", decodedBlocks.count());
-                    progress.update(decodedBlocks.count() - oldCount);
-                }
-                nextPollTime = currTime + HEART_BEAT_INTERVAL;
-            }
 
             if (sourceSymbolCounter % repairSymbolInterval == 0) {
                 // Send repair symbols of previous blocks
                 for (uint8_t prevBlock = 0; prevBlock < currBlock; prevBlock++) {
                     if (!decodedBlocks.test(prevBlock)) {
-                        sendSymbol(socket, repairSymbolIters[prevBlock]);
+                        sendSymbol(socket, repairSymbolIters[prevBlock], decodedBlocks, progress);
                     }
                 }
             }
@@ -185,17 +189,8 @@ void transmit(RaptorQEncoder& encoder,
         // Send repair symbols for in round-robin
         for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
             if (!decodedBlocks.test(sbn)) {
-                sendSymbol(socket, repairSymbolIters[sbn]);
+                sendSymbol(socket, repairSymbolIters[sbn], decodedBlocks, progress);
             }
-        }
-
-        // Poll to see if any ACK arrives
-        while (ack_poll(socket, datagram)) {
-            Tub<WireFormat::Ack> ack(datagram);
-            uint8_t oldCount = decodedBlocks.count();
-            decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-            //printf("Received ACK: %u\n", decodedBlocks.count());
-            progress.update(decodedBlocks.count() - oldCount);
         }
     }
 }

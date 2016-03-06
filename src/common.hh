@@ -101,19 +101,22 @@ generateRandom()
     return std::rand();
 }
 
-bool ack_poll(DCCPSocket* socket, char*& datagram)
+bool recv_poll(DCCPSocket* socket)
 {
-    try {
-        struct pollfd ufds {socket->fd_num(), POLLIN, 0};
-        if (SystemCall("poll", poll(&ufds, 1, 0)) == 0) {
-            return false;
+    struct pollfd ufds {socket->fd_num(), POLLIN, 30000};
+    int rv = SystemCall("poll", poll(&ufds, 1, 30000));
+
+    if (rv == -1) {
+        perror("poll");
+    } else if (rv == 0) {
+        printf("Unable to receive in 30 seconds!");
+    } else {
+        if (ufds.revents & POLLIN) {
+            return true;
         }
-        datagram = socket->recv();
-        return true;
-    } catch (const unix_error &e) {
-        printf("%s\n", e.what());
-        return false;
     }
+
+    return false;
 }
 
 /**
