@@ -7,7 +7,7 @@
 #include "wire_format.hh"
 #include "progress.hh"
 
-int DEBUG_F = 1;
+int DEBUG_F;
 
 void printUsage(char *command) 
 {
@@ -73,14 +73,13 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
 
     // Wait for handshake response
     char* datagram = socket->recv();
+    if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_RESP) {
+        std::cerr << "Expect to receive handshake response" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
     Tub<WireFormat::HandshakeResp> resp(datagram);
     free(datagram);
-
-    // assert(resp.size() == recvDatagram.recvlen);
-    if (resp->header.opcode != WireFormat::Opcode::HANDSHAKE_RESP) {
-        std::cerr << "Bad handshake response" << std::endl;
-        return nullptr;
-    }
     
     if (connectionId == resp->connectionId) {
         printf("Received handshake response: {connection id = %u}\n",
@@ -219,6 +218,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
 
+    DEBUG_F = 1;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");

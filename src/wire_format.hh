@@ -7,7 +7,7 @@
 
 namespace WireFormat {
 
-enum class Opcode : uint8_t {
+enum Opcode : uint8_t {
     HANDSHAKE_REQ       = 5,
     HANDSHAKE_RESP      = 6,
     DATA_PACKET         = 7,
@@ -17,6 +17,10 @@ enum class Opcode : uint8_t {
 struct Header {
     Opcode opcode;
 };
+
+Opcode getOpcode(char* datagram) {
+    return *((Opcode*)datagram);
+}
 
 struct HandshakeReq {
     Header header;
@@ -31,7 +35,7 @@ struct HandshakeReq {
                  size_t fileSize,
                  RaptorQ::OTI_Common_Data otiCommon,
                  RaptorQ::OTI_Scheme_Specific_Data otiScheme)
-        : header {Opcode::HANDSHAKE_REQ}
+        : header {HANDSHAKE_REQ}
         , connectionId(connectionId)
         , fileSize(fileSize)
         , otiCommon(otiCommon)
@@ -46,7 +50,7 @@ struct HandshakeResp {
     uint32_t connectionId;
 
     HandshakeResp(uint32_t connectionId)
-        : header {Opcode::HANDSHAKE_RESP}
+        : header {HANDSHAKE_RESP}
         , connectionId(connectionId)
     {}
 } __attribute__((packed));
@@ -57,7 +61,7 @@ struct DataPacket {
     char raw[SYMBOL_SIZE];
 
     DataPacket(uint32_t id, void* data)
-        : header {Opcode::DATA_PACKET}
+        : header {DATA_PACKET}
         , id(id)
     {
         std::memcpy(raw, data, SYMBOL_SIZE);
@@ -77,7 +81,7 @@ struct Ack {
     uint32_t repairSymbolInterval;
 
     Ack(std::bitset<64> bitset[4], uint32_t repairSymbolInterval)
-        : header {Opcode::ACK}
+        : header {ACK}
         , bitmask {bitset[0].to_ullong(),
                    bitset[1].to_ullong(),
                    bitset[2].to_ullong(),

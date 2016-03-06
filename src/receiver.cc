@@ -64,7 +64,13 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     DCCPSocket remoteSocket = localSocket->accept();
     DCCPSocket* socket = new DCCPSocket(std::move(remoteSocket)); 
 
+    // Wait for handshake request
     char* datagram = socket->recv();
+    if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_REQ) {
+        std::cerr << "Expect to receive handshake request" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
     new (&req) Tub<WireFormat::HandshakeReq>(datagram);
     free(datagram);
 
@@ -73,6 +79,7 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
            req->connectionId, req->fileName, req->fileSize, req->otiCommon,
            req->otiScheme);
 
+    // Send handshake response
     sendInWireFormat<WireFormat::HandshakeResp>(
         socket, uint32_t(req->connectionId));
     printf("Sent handshake response: {connection id = %u}\n",
@@ -106,8 +113,11 @@ void receive(RaptorQDecoder& decoder,
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
+
+    char* datagram;
+
     while (1) {
-        char* datagram = socket->recv();
+        datagram = socket->recv();
         // sender has closed the connection
         if (!datagram)
             break;
