@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
+#include "unistd.h"
 
 #include "tub.hh"
 #include "common.hh"
