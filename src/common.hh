@@ -104,7 +104,7 @@ generateRandom()
 bool recv_poll(DCCPSocket* socket)
 {
     struct pollfd ufds {socket->fd_num(), POLLIN, 30000};
-    int rv = SystemCall("poll", poll(&ufds, 1, 30000));
+    int rv = poll(&ufds, 1, 30000);
 
     if (rv == -1) {
         perror("poll");

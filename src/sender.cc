@@ -111,8 +111,10 @@ void sendSymbol(DCCPSocket *socket,
 
     usleep(5000);
 
+    struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 30000};
+
     while (1) {
-        int rv = SystemCall("poll", poll(&ufds, 1, 30000));
+        int rv = poll(&ufds, 1, 30000);
         if (rv == -1) {
             perror("poll");
             exit(EXIT_FAILURE);
