@@ -103,7 +103,7 @@ generateRandom()
 
 bool recv_poll(DCCPSocket* socket)
 {
-    struct pollfd ufds {socket->fd_num(), POLLIN, 30000};
+    struct pollfd ufds {socket->fd_num(), POLLIN, 0};
     int rv = poll(&ufds, 1, 30000);
 
     if (rv == -1) {

@@ -109,7 +109,8 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
 
 
 void setAllBlocksDecoded(Bitmask256 &decodedBlocks,
-                         uint64_t &encoder_blocks) {
+                         uint64_t &encoder_blocks) 
+{
     for (uint8_t i = 0; i < encoder_blocks; i++)
         decodedBlocks.set(i);
 }
@@ -132,7 +133,7 @@ void sendSymbol(DCCPSocket *socket,
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
 
-    struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 30000};
+    struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 0};
 
     while (1) {
         int rv = poll(&ufds, 1, 30000);
@@ -149,7 +150,9 @@ void sendSymbol(DCCPSocket *socket,
 
                 char* datagram = socket->recv();
                 if (!datagram) { // receiver has closed connection
+                    uint8_t oldCount = decodedBlocks.count();
                     setAllBlocksDecoded(decodedBlocks, progress.workSize);
+                    progress.update(decodedBlocks.count() - oldCount);
                     break;
                 }
 

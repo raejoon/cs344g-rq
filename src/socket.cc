@@ -195,7 +195,7 @@ void UDPSocket::sendbytes( const char *payload, size_t length )
     SystemCall( "send", ::send( fd_num(),
         payload,
         length,
-				0 ) );
+	    0 ) );
 
   register_write();
 
@@ -254,17 +254,13 @@ DCCPSocket DCCPSocket::accept( void )
 int DCCPSocket::send( const char* payload, int payload_len )
 {
   int bytes_sent;
-  try { 
+
   bytes_sent = ::send( fd_num(),
 				payload,
 				payload_len,
 				0 ); 
-  } catch (const unix_error &e) {
-    printf("%s\n", e.what());
-    return -2;
-  }
 
-  if (bytes_sent < 0) {
+   if (bytes_sent < 0) {
     // perror("send"); 
     return -1;
   }
