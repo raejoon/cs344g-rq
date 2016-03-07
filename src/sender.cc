@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 1;
+    DEBUG_F = 0;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");

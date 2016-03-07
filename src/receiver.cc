@@ -203,7 +203,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 1;
+    DEBUG_F = 0;
     // Wait for handshake request and send back handshake response
     Tub<WireFormat::HandshakeReq> req;
     DCCPSocket* socket = respondHandshake(req);
