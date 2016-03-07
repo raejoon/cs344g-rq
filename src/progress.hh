@@ -1,5 +1,6 @@
 #ifndef PROGRESS_HH
 #define PROGRESS_HH
+#include <sys/ioctl.h>
 #include <iostream>
 #include <chrono>
 #include <iomanip>
@@ -47,19 +48,26 @@ struct progress_t {
     void show() const {
         if (debug) return;
 
+        struct winsize w;
+        ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+
         float fraction = completed * 1.0f / workSize;
-        int barwidth = 50;
-        std::cout <<"[";
-        int pos = barwidth * fraction;
-        for (int i = 0; i < barwidth; ++i) {
-            if (i < pos) std::cout << "=";
-            else if (i == pos) std::cout << ">";
-            else std::cout << " ";
+        if (w.ws_col >= 35) {
+            int barwidth = (w.ws_col - 30 < 70)? w.ws_col - 30 : 70;
+            std::cout <<"[";
+            int pos = barwidth * fraction;
+            for (int i = 0; i < barwidth; ++i) {
+                if (i < pos) std::cout << "=";
+                else if (i == pos) std::cout << ">";
+                else std::cout << " ";
+            }
+            std::cout << "] ";
         }
+
         int percentage = static_cast<int>(fraction * 100);
         assert(percentage <= 100);
-        std::cout << "] " << percentage << " % ";
-
+        std::cout << percentage << " % ";
+        
         int hrs = int(elapsed_seconds) / 3600;
         int mins = (int(elapsed_seconds) % 3600) / 60;
         int secs = (int(elapsed_seconds)) % 60;
