@@ -109,7 +109,7 @@ void sendSymbol(DCCPSocket *socket,
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
 
-    usleep(5000);
+    // usleep(5000);
 
     struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 30000};
 
@@ -141,8 +141,10 @@ void sendSymbol(DCCPSocket *socket,
                 if (DEBUG_F)
                     printf("Poll ready to send!\n");
 
-                sendInWireFormat<WireFormat::DataPacket>(socket,
-                        (*symbolIterator).id(), symbol.data());
+                if (sendInWireFormat<WireFormat::DataPacket>(socket,
+                        (*symbolIterator).id(), symbol.data()) == -1)
+                   continue;
+
                 ++symbolIterator;
                 break;
             }

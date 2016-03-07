@@ -104,7 +104,7 @@ public:
   DCCPSocket accept( void );
 
   /* send datagram to connected address */
-  void send( const char* payload, int payload_len );
+  int send( const char* payload, int payload_len );
 
   /* receive datagram from connected address */
   char* recv( void );

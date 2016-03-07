@@ -123,12 +123,18 @@ bool recv_poll(DCCPSocket* socket)
  * TODO
  */
 template<typename T, typename... Args>
-void sendInWireFormat(DCCPSocket* socket,
+int sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    socket->send(raw, sizeof(T));
+    if (socket->send(raw, sizeof(T)) == -1) {
+        usleep(100000);
+        // std::cerr << "sender needs to slow down" << std::endl;
+        return -1;
+    }
+
+    return 0;
 }
 
 /**
