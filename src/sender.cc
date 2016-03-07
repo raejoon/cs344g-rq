@@ -59,6 +59,22 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
                               const FileWrapper<Alignment>& file)
 {
     DCCPSocket* socket {new DCCPSocket};
+
+    // Check flags
+    /*
+    int flags = fcntl(socket->fd_num(), F_GETFL, 0);
+    if (flags & O_NONBLOCK)
+        std::cerr << "Expect to be blocking!" << std::endl;
+    else
+        std::cerr << "Already set to be blocking!" << std::endl;
+
+    struct timeval tv;
+    socklen_t tv_len;
+    
+    getsockopt(socket->fd_num(), SOL_SOCKET, SO_SNDTIMEO, &tv, &tv_len);  
+    std::cerr << tv.tv_sec << "s " << tv.tv_usec << "us" << std::endl;
+    */
+
     socket->connect(Address(host, port));
 
     // Send handshake request
@@ -108,8 +124,6 @@ void sendSymbol(DCCPSocket *socket,
     static RaptorQSymbol symbol {0};
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
-
-    // usleep(5000);
 
     struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 30000};
 

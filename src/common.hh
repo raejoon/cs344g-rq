@@ -130,7 +130,7 @@ int sendInWireFormat(DCCPSocket* socket,
     new(raw) T(static_cast<Args&&>(args)...);
     if (socket->send(raw, sizeof(T)) == -1) {
         usleep(100000);
-        // std::cerr << "sender needs to slow down" << std::endl;
+        perror("send");
         return -1;
     }
 

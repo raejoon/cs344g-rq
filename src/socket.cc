@@ -259,6 +259,7 @@ int DCCPSocket::send( const char* payload, int payload_len )
 				0 ); 
 
   if (bytes_sent < 0) {
+    printf("socket send: %d\n", errno);
     return -1;
   }
 
