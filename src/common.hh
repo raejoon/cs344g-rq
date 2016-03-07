@@ -11,7 +11,6 @@
 #include "socket.hh"
 
 /**
- * TODO: confirm it?
  * The recommended setting of parameter Al in rfc6330 is 32.
  */
 typedef uint32_t Alignment;
@@ -102,32 +101,38 @@ generateRandom()
     return std::rand();
 }
 
-bool poll(UDPSocket* socket, UDPSocket::received_datagram& datagram)
+bool recv_poll(DCCPSocket* socket)
 {
-    try {
-        struct pollfd ufds {socket->fd_num(), POLLIN, 0};
-        if (SystemCall("poll", poll(&ufds, 1, 0)) == 0) {
-            return false;
+    struct pollfd ufds {socket->fd_num(), POLLIN, 0};
+    int rv = poll(&ufds, 1, 30000);
+
+    if (rv == -1) {
+        perror("poll");
+    } else if (rv == 0) {
+        printf("Unable to receive in 30 seconds!");
+    } else {
+        if (ufds.revents & POLLIN) {
+            return true;
         }
-        datagram = socket->recv();
-        return true;
-    } catch (const unix_error &e) {
-        printf("%s\n", e.what());
-        return false;
     }
+
+    return false;
 }
 
 /**
  * TODO
  */
 template<typename T, typename... Args>
-void sendInWireFormat(UDPSocket* udpSocket,
-                      const Address& dest,
+int sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    udpSocket->sendbytesto(dest, raw, sizeof(T));
+    if (socket->send(raw, sizeof(T)) == -1) {
+        return -1;
+    }
+
+    return 0;
 }
 
 /**

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <RaptorQ.hpp>
+#include "unistd.h"
 
 #include "tub.hh"
 #include "common.hh"
@@ -9,23 +10,27 @@
 const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
         2 * HEART_BEAT_INTERVAL;
 
-void printUsage(char *command) {
+int DEBUG_F;
+
+void printUsage(char *command) 
+{
     std::cerr << "Usage: " << command << " [-dh]" << std::endl;
     std::cerr << "\t-h: help" << std::endl;
     std::cerr << "\t-d: debug (per-symbol messages instead of a progress bar)" << std::endl;
 }
 
-int checkArgs(int argc, char *argv[]) {
+int parseArgs(int argc, char *argv[]) 
+{
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
     // check options
-    int debug_f = 0;
+    DEBUG_F = 0;
     int c = 0;
     while ((c = getopt(argc, argv, "dh")) != -1) {
         switch (c) {
             case 'd':
-                debug_f = 1;
+                DEBUG_F = 1;
                 break;
             case 'h':
             case '?':
@@ -36,83 +41,102 @@ int checkArgs(int argc, char *argv[]) {
         }
     }
     if ( optind != argc ) {
-      printUsage(argv[0]);
+        printUsage(argv[0]);
         return -1;
     }
-    return debug_f;
+
+    return 0;
 }
 
-int main( int argc, char *argv[] )
+DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
 {
-    int debug_f;
-    if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
-
-    // Wait for handshake request and send back handshake response
-    std::unique_ptr<UDPSocket> socket{new UDPSocket};
+    DCCPSocket* localSocket {new DCCPSocket};
     try {
-        socket->bind(Address("0", 6330));
+        localSocket->bind(Address("0", 6330));
     }
     catch (unix_error e) {
-        std::cerr << "Port 6330 is already used. Picking a random port..." << std::endl;
-        socket->bind(Address("0", 0));
+        std::cerr << "Port 6330 is already used. ";
+        std::cerr << "Picking a random port..." << std::endl;
+        localSocket->bind(Address("0", 0));
     }
-    printf("%s\n", socket->local_address().to_string().c_str());
+    printf("%s\n", localSocket->local_address().to_string().c_str());
 
-    UDPSocket::received_datagram datagram = socket->recv();
-    Address senderAddr = datagram.source_address;
-    Tub<WireFormat::HandshakeReq> req(datagram.payload);
-    printf("Recevied handshake request: {connection Id = %u, file name = %s, "
-            "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
-            req->connectionId, req->fileName, req->fileSize, req->otiCommon,
-            req->otiScheme);
+    localSocket->listen();
+    DCCPSocket remoteSocket = localSocket->accept();
+    DCCPSocket* socket = new DCCPSocket(std::move(remoteSocket)); 
+
+    // Wait for handshake request
+    char* datagram;
+    while (!recv_poll(socket)) {}
+    datagram = socket->recv(); 
+    
+    if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_REQ) {
+        std::cerr << "Expect to receive handshake request" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    new (&req) Tub<WireFormat::HandshakeReq>(datagram);
+    free(datagram);
+
+    printf("Received handshake request: {connection id = %u, file name = %s, "
+           "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           req->connectionId, req->fileName, req->fileSize, req->otiCommon,
+           req->otiScheme);
+
+    // Send handshake response
     sendInWireFormat<WireFormat::HandshakeResp>(
-            socket.get(), senderAddr, uint32_t(req->connectionId));
+        socket, uint32_t(req->connectionId));
+    printf("Sent handshake response: {connection id = %u}\n",
+           req->connectionId);
 
-    // Set up the RaptorQ decoder
-    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
+    return socket;
+}
+
+void receive(RaptorQDecoder& decoder,
+             DCCPSocket* socket,
+             void* recvfile_start)
+{
+    // Start receiving symbols
     size_t decoderPaddedSize = 0;
-    for (int i = 0; i < decoder.blocks(); i++) {
-        decoderPaddedSize += decoder.block_size(i);
-    }
 
-    // Create the receiving file
-    int fd = SystemCall("open the file to be written",
-            open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
-    SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
-    SystemCall("write", write(fd, "", 1));
-    void* start = mmap(NULL, decoderPaddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
-    if (start == MAP_FAILED) {
-        printf("mmap failed:%s\n", strerror(errno));
-        return EXIT_FAILURE;
+    std::vector<Alignment*> blockStart(decoder.blocks() + 1);
+    blockStart[0] = reinterpret_cast<Alignment*>(recvfile_start);
+    for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
+        blockStart[sbn + 1] = blockStart[sbn] +
+            decoder.block_size(sbn) / ALIGNMENT_SIZE;
+        decoderPaddedSize += decoder.block_size(sbn);
     }
 
     // Initialize progress bar
-    progress_t progress {decoderPaddedSize, debug_f};
+    progress_t progress {decoderPaddedSize, DEBUG_F};
     progress.show();
 
-    // Start receiving symbols
-    std::vector<Alignment*> blockStart(decoder.blocks() + 1);
-    blockStart[0] = reinterpret_cast<Alignment*>(start);
-    for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
-        blockStart[sbn + 1] = blockStart[sbn] +
-                decoder.block_size(sbn) / ALIGNMENT_SIZE;
-    }
-
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
-            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
+        std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     Bitmask256 decodedBlocks;
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
+
+    char* datagram;
+
     while (decodedBlocks.count() < decoder.blocks()) {
-        datagram = socket->recv();
-        Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
+        while (!recv_poll(socket)) {}
+        datagram = socket->recv(); 
+
+        if (WireFormat::getOpcode(datagram) != WireFormat::Opcode::DATA_PACKET) {
+          std::cerr << "Expect to receive DATA packet" << std::endl;
+          exit(EXIT_FAILURE);
+        }
+
+        Tub<WireFormat::DataPacket> dataPacket(datagram);
+        free(datagram); 
+
         uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
-        if (debug_f) {
-            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn),
-                   esi);
+        if (DEBUG_F) {
+            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
         }
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
@@ -120,10 +144,10 @@ int main( int argc, char *argv[] )
         auto currTime = std::chrono::system_clock::now();
         if (currTime > nextAckTime) {
             // Send heartbeat ACK
-            if (debug_f) printf("Sent Heartbeat ACK\n");
-            sendInWireFormat<WireFormat::Ack>(socket.get(), senderAddr,
-                                              decodedBlocks.bitset,
-                                              repairSymbolInterval);
+            if (DEBUG_F) printf("Sent Heartbeat ACK\n");
+            sendInWireFormat<WireFormat::Ack>(socket,
+                    decodedBlocks.bitset,
+                    repairSymbolInterval);
             nextAckTime = currTime + HEART_BEAT_INTERVAL;
         }
 
@@ -141,7 +165,8 @@ int main( int argc, char *argv[] )
             progress.update(decoder.block_size(sbn));
 
             // send ACK for block sbn
-            if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
+            if (DEBUG_F) 
+                printf("Block %u decoded.\n", static_cast<int>(sbn));
             decodedBlocks.set(sbn);
 
             // Update the repair symbol transmission interval to be sent in the
@@ -152,18 +177,53 @@ int main( int argc, char *argv[] )
                 repairSymbolInterval = ~0u;
             } else {
                 packetLossRate = 1.0f -
-                        numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
+                    numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
                 assert(packetLossRate > 0.0f);
                 repairSymbolInterval = static_cast<uint32_t >(std::min(
-                        std::ceil(1.0f / packetLossRate - 1),
-                        1.0f * (((uint32_t)~0u) - 1)));
+                            std::ceil(1.0f / packetLossRate - 1),
+                            1.0f * (((uint32_t)~0u) - 1)));
             }
-            if (debug_f) {
+            if (DEBUG_F) {
                 printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
-                       packetLossRate, repairSymbolInterval);
+                        packetLossRate, repairSymbolInterval);
             }
         }
     }
+
+    printf("File decoded successfully.\n");
+}
+
+int main(int argc, char *argv[])
+{
+    if (parseArgs(argc, argv) == -1)
+        return EXIT_FAILURE;
+
+    DEBUG_F = 0;
+    // Wait for handshake request and send back handshake response
+    Tub<WireFormat::HandshakeReq> req;
+    DCCPSocket* socket = respondHandshake(req);
+
+    // Set up the RaptorQ decoder
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
+    size_t decoderPaddedSize = 0;
+    for (int i = 0; i < decoder.blocks(); i++) {
+        decoderPaddedSize += decoder.block_size(i);
+    }
+
+    // Create the receiving file
+    int fd = SystemCall("open the file to be written",
+    //         open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+             open("demo.out", O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+    SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
+    SystemCall("write", write(fd, "", 1));
+    void* start = mmap(NULL, decoderPaddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
+    if (start == MAP_FAILED) {
+        printf("mmap failed:%s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    // Receive file
+    receive(decoder, socket, start);
 
     SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
     SystemCall("munmap", munmap(start, decoderPaddedSize));
@@ -171,28 +231,6 @@ int main( int argc, char *argv[] )
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
 
-    assert(decodedBlocks.count() == decoder.blocks());
-    printf("File decoded successfully.\n");
-
-    // Teardown phase: keep sending ACK until the sender becomes quite for a while
-
-    // Clean up the udp socket receiving buffer first
-    while (poll(socket.get(), datagram)) { }
-    std::chrono::time_point<std::chrono::system_clock> stopTime =
-            std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
-    while (true) {
-        if (poll(socket.get(), datagram)) {
-            stopTime = std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
-        }
-
-        if (std::chrono::system_clock::now() < stopTime) {
-            sendInWireFormat<WireFormat::Ack>(socket.get(), senderAddr,
-                                              decodedBlocks.bitset, ~0u);
-            std::this_thread::sleep_for(HEART_BEAT_INTERVAL);
-        } else {
-            break;
-        }
-    }
-
+    free(socket);
     return EXIT_SUCCESS;
 }

@@ -1,11 +1,47 @@
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
+#include "unistd.h"
 
 #include "tub.hh"
 #include "common.hh"
 #include "wire_format.hh"
 #include "progress.hh"
+
+int DEBUG_F;
+
+void printUsage(char *command) 
+{
+    std::cerr << "Usage: " << command << " HOST [PORT] FILE" << std::endl;
+}
+
+int parseArgs(int argc,
+              char *argv[],
+              std::string& host,
+              std::string& port,
+              char*& filename)
+{
+    /* check the command-line arguments */
+    if ( argc < 1 ) { abort(); } /* for sticklers */
+
+    /* fetch command-line arguments */
+    if ( argc == 3 ) {
+        host = argv[1];
+        port = "6330";
+        filename = argv[2];
+    }
+    else if ( argc == 4 ) {
+        host = argv[1];
+        port = argv[2];
+        filename = argv[3];
+    }
+    else {
+        printUsage(argv[0]);
+        return -1;
+    }
+
+    return 0;
+}
 
 /**
  * Starts the handshake procedure with the receiver. This method needs to
@@ -14,37 +50,56 @@
  * TODO: implement retry strategy to counteract lost request/response.
  *
  * \return
- *      A reference to a non-blocking UDP socket if the handshake procedure
+ *      A reference to a blocking DCCP socket if the handshake procedure
  *      succeeds; nullptr otherwise.
  */
-template<typename Alignment>
-std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
-                                             const std::string& host,
-                                             const std::string& port,
-                                             const FileWrapper<Alignment>& file)
+DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
+                              const std::string& host,
+                              const std::string& port,
+                              const FileWrapper<Alignment>& file)
 {
-    std::unique_ptr<UDPSocket> socket {new UDPSocket};
+    DCCPSocket* socket {new DCCPSocket};
+
+    // Check flags
+    /*
+    int flags = fcntl(socket->fd_num(), F_GETFL, 0);
+    if (flags & O_NONBLOCK)
+        std::cerr << "Expect to be blocking!" << std::endl;
+    else
+        std::cerr << "Already set to be blocking!" << std::endl;
+
+    struct timeval tv;
+    socklen_t tv_len;
+    
+    getsockopt(socket->fd_num(), SOL_SOCKET, SO_SNDTIMEO, &tv, &tv_len);  
+    std::cerr << tv.tv_sec << "s " << tv.tv_usec << "us" << std::endl;
+    */
+
     socket->connect(Address(host, port));
 
     // Send handshake request
     uint32_t connectionId = generateRandom();
     sendInWireFormat<WireFormat::HandshakeReq>(
-            socket.get(), socket->peer_address(),
-            connectionId, file.name(), file.size(), encoder.OTI_Common(),
-            encoder.OTI_Scheme_Specific());
-    printf("Sending handshake request: {connection Id = %u, file size = %zu, "
-                   "OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
-           connectionId, file.size(), encoder.OTI_Common(),
+            socket,
+            connectionId, file.name(), file.size(), 
+            encoder.OTI_Common(), encoder.OTI_Scheme_Specific());
+    printf("Sent handshake request: {connection id = %u, file name = %s, "
+           "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           connectionId, file.name(), file.size(), encoder.OTI_Common(),
            encoder.OTI_Scheme_Specific());
 
     // Wait for handshake response
-    UDPSocket::received_datagram recvDatagram = socket->recv();
-    Tub<WireFormat::HandshakeResp> resp(recvDatagram.payload);
-    // TODO: the right thing to do after receiving a datagram is to check
-    // the opcode first
-//    assert(resp.size() == recvDatagram.recvlen);
+    char* datagram = socket->recv();
+    if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_RESP) {
+        std::cerr << "Expect to receive handshake response" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    Tub<WireFormat::HandshakeResp> resp(datagram);
+    free(datagram);
+    
     if (connectionId == resp->connectionId) {
-        printf("Received handshake response: {connectionId = %u}\n",
+        printf("Received handshake response: {connection id = %u}\n",
                resp->connectionId);
         return socket;
     }
@@ -52,46 +107,85 @@ std::unique_ptr<UDPSocket> initiateHandshake(const RaptorQEncoder& encoder,
     return nullptr;
 }
 
-/**
- * Invokes congestion control algorithm.
- *
- * This method is now called before sending each symbol and blocks until the
- * congestion controller says it's OK to send. This is subject to change.
- */
-void congestionControl() {
-    // TODO(Francis): implement congestion control logic here
-    // Sleep-based congestion control :p
-//    usleep(1000);
+
+void setAllBlocksDecoded(Bitmask256 &decodedBlocks,
+                         uint64_t &encoder_blocks) 
+{
+    for (uint8_t i = 0; i < encoder_blocks; i++)
+        decodedBlocks.set(i);
 }
 
 /**
- * Send a single symbol to the given UDP socket.
+ * Send a single symbol to the given DCCP socket.
  *
  * \param[in]
- *      The UDP socket.
+ *      The DCCP socket.
  * \param[in,out] symbolIterator
  *      A symbol iterator referencing the symbol about to send; the position
  *      of the iterator will be advanced by one after this function is called.
  */
-void sendSymbol(UDPSocket *socket,
-                RaptorQSymbolIterator &symbolIterator)
+void sendSymbol(DCCPSocket *socket,
+                RaptorQSymbolIterator &symbolIterator,
+                Bitmask256 &decodedBlocks,
+                progress_t &progress)
 {
     static RaptorQSymbol symbol {0};
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
 
-    // Wait until the congestion controller gives us a pass
-    congestionControl();
-    sendInWireFormat<WireFormat::DataPacket>(socket,
-            socket->peer_address(), (*symbolIterator).id(), symbol.data());
-    ++symbolIterator;
+    struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 0};
+
+    while (1) {
+        int rv = poll(&ufds, 1, 30000);
+        if (rv == -1) {
+            perror("poll");
+            exit(EXIT_FAILURE);
+        } else if (rv == 0) {
+            printf("Unable to send or receive in 30 seconds!");
+            exit(EXIT_FAILURE);
+        } else {
+            if (ufds.revents & POLLIN) {
+                if (DEBUG_F)
+                    printf("Poll ready to recv!\n");
+
+                char* datagram = socket->recv();
+                if (!datagram) { // receiver has closed connection
+                    uint8_t oldCount = decodedBlocks.count();
+                    setAllBlocksDecoded(decodedBlocks, progress.workSize);
+                    progress.update(decodedBlocks.count() - oldCount);
+                    break;
+                }
+
+                if (WireFormat::getOpcode(datagram) != WireFormat::ACK) {
+                    std::cerr << "Expect to receive ACK" << std::endl;
+                } else {
+                    Tub<WireFormat::Ack> ack(datagram);
+                    uint8_t oldCount = decodedBlocks.count();
+                    decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+                    progress.update(decodedBlocks.count() - oldCount);
+                }
+            }
+
+            if (ufds.revents & POLLOUT) {
+                if (DEBUG_F)
+                    printf("Poll ready to send!\n");
+
+                if (sendInWireFormat<WireFormat::DataPacket>(socket,
+                        (*symbolIterator).id(), symbol.data()) == -1)
+                   continue;
+
+                ++symbolIterator;
+                break;
+            }
+        }
+    }
 }
 
 void transmit(RaptorQEncoder& encoder,
-              UDPSocket* socket)
+              DCCPSocket* socket)
 {
     // Initialize progress bar
-    progress_t progress {encoder.blocks()};
+    progress_t progress {encoder.blocks(), DEBUG_F};
     progress.show();
 
     // Set up repair symbol iterators of all blocks
@@ -102,38 +196,22 @@ void transmit(RaptorQEncoder& encoder,
 
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
-    std::chrono::time_point<std::chrono::system_clock> nextPollTime =
-            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
     uint32_t sourceSymbolCounter = 0;
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
-    UDPSocket::received_datagram datagram {Address(), 0, 0, 0};
+
     for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
         const auto &block = *encoder.begin().operator++(currBlock);
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
-            sendSymbol(socket, sourceSymbolIter);
+            sendSymbol(socket, sourceSymbolIter, decodedBlocks, progress);
             sourceSymbolCounter++;
-
-            auto currTime = std::chrono::system_clock::now();
-            if (currTime > nextPollTime) {
-                // Poll to see if any ACK arrives
-                while (poll(socket, datagram)) {
-                    Tub<WireFormat::Ack> ack(datagram.payload);
-                    uint8_t oldCount = decodedBlocks.count();
-                    decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-                    repairSymbolInterval = ack->repairSymbolInterval;
-                    //printf("Received ACK: %u\n", decodedBlocks.count());
-                    progress.update(decodedBlocks.count() - oldCount);
-                }
-                nextPollTime = currTime + HEART_BEAT_INTERVAL;
-            }
 
             if (sourceSymbolCounter % repairSymbolInterval == 0) {
                 // Send repair symbols of previous blocks
                 for (uint8_t prevBlock = 0; prevBlock < currBlock; prevBlock++) {
                     if (!decodedBlocks.test(prevBlock)) {
-                        sendSymbol(socket, repairSymbolIters[prevBlock]);
+                        sendSymbol(socket, repairSymbolIters[prevBlock], decodedBlocks, progress);
                     }
                 }
             }
@@ -144,17 +222,8 @@ void transmit(RaptorQEncoder& encoder,
         // Send repair symbols for in round-robin
         for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
             if (!decodedBlocks.test(sbn)) {
-                sendSymbol(socket, repairSymbolIters[sbn]);
+                sendSymbol(socket, repairSymbolIters[sbn], decodedBlocks, progress);
             }
-        }
-
-        // Poll to see if any ACK arrives
-        while (poll(socket, datagram)) {
-            Tub<WireFormat::Ack> ack(datagram.payload);
-            uint8_t oldCount = decodedBlocks.count();
-            decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-            //printf("Received ACK: %u\n", decodedBlocks.count());
-            progress.update(decodedBlocks.count() - oldCount);
         }
     }
 }
@@ -162,7 +231,6 @@ void transmit(RaptorQEncoder& encoder,
 /**
  * Instantiates a RaptorQ encoder with an (near) optimal setting.
  */
-template<typename Alignment>
 std::unique_ptr<RaptorQEncoder> getEncoder(FileWrapper<Alignment>& file)
 {
     int numOfSymbolsPerBlock = 64;
@@ -185,28 +253,13 @@ std::unique_ptr<RaptorQEncoder> getEncoder(FileWrapper<Alignment>& file)
 
 int main(int argc, char *argv[])
 {
-    /* check the command-line arguments */
-    if ( argc < 1 ) { abort(); } /* for sticklers */
-
-    char *filename;
     std::string host, port;
+    char *filename;
 
-    /* fetch command-line arguments */
-    if ( argc == 3 ) {
-        filename = argv[2];
-        host = argv[1];
-        port = "6330";
-    }
-    else if ( argc == 4 ) {
-        filename = argv[3];
-        host = argv[1];
-        port = argv[2];
-    }
-    else {
-        std::cerr << "Usage: " << argv[ 0 ] << " HOST [PORT] FILE" << std::endl;
+    if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
-    }
 
+    DEBUG_F = 0;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
@@ -218,7 +271,7 @@ int main(int argc, char *argv[])
     encoder->precompute(1, true);
 
     // Initiate handshake process
-    std::unique_ptr<UDPSocket> socket = initiateHandshake(
+    DCCPSocket* socket = initiateHandshake(
             *encoder, host, port, file);
     if (!socket) {
         printf("Handshake failure!\n");
@@ -226,7 +279,8 @@ int main(int argc, char *argv[])
     }
 
     // Start transmission
-    transmit(*encoder, socket.get());
+    transmit(*encoder, socket);
 
+    free(socket);
     return EXIT_SUCCESS;
 }
