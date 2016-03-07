@@ -19,7 +19,7 @@ FILESIZE="10"
 echo -e "${FILESIZE}" >> scp-delay-test.log
 echo -e "${FILESIZE}" >> tor-delay-test.log
 
-for DELAY in `seq 10 10 50`;
+for DELAY in `seq 20 20 200`;
   do
 
     echo "==== Test delay: $DELAY ms ====="
