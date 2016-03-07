@@ -217,8 +217,8 @@ int main(int argc, char *argv[])
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
-    //       open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
-             open("demo.out", O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+           open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+    //         open("demo.out", O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
     SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
     SystemCall("write", write(fd, "", 1));
     void* start = mmap(NULL, decoderPaddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
