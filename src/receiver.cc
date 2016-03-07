@@ -120,16 +120,12 @@ void receive(RaptorQDecoder& decoder,
 
     char* datagram;
 
-    while (1) {
+    while (decodedBlocks.count() < decoder.blocks()) {
         while (!recv_poll(socket)) {}
         datagram = socket->recv(); 
 
-        // sender has closed the connection
-        if (!datagram)
-            break;
-
         if (WireFormat::getOpcode(datagram) != WireFormat::Opcode::DATA_PACKET) {
-          std::cerr << "Expect to receive handshake response" << std::endl;
+          std::cerr << "Expect to receive DATA packet" << std::endl;
           exit(EXIT_FAILURE);
         }
 
@@ -140,7 +136,7 @@ void receive(RaptorQDecoder& decoder,
         uint32_t esi = (dataPacket->id << 8) >> 8;
 
         if (DEBUG_F) {
-        //printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
+            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
         }
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
@@ -194,7 +190,6 @@ void receive(RaptorQDecoder& decoder,
         }
     }
 
-    assert(decodedBlocks.count() == decoder.blocks());
     printf("File decoded successfully.\n");
 }
 
@@ -217,7 +212,7 @@ int main(int argc, char *argv[])
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
-           open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+             open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
     //         open("demo.out", O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
     SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
     SystemCall("write", write(fd, "", 1));

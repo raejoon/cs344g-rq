@@ -107,6 +107,13 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
     return nullptr;
 }
 
+
+void setAllBlocksDecoded(Bitmask256 &decodedBlocks,
+                         uint64_t &encoder_blocks) {
+    for (uint8_t i = 0; i < encoder_blocks; i++)
+        decodedBlocks.set(i);
+}
+
 /**
  * Send a single symbol to the given DCCP socket.
  *
@@ -141,8 +148,13 @@ void sendSymbol(DCCPSocket *socket,
                     printf("Poll ready to recv!\n");
 
                 char* datagram = socket->recv();
+                if (!datagram) { // receiver has closed connection
+                    setAllBlocksDecoded(decodedBlocks, progress.workSize);
+                    break;
+                }
+
                 if (WireFormat::getOpcode(datagram) != WireFormat::ACK) {
-                    std::cerr << "Expect to receive handshake request" << std::endl;
+                    std::cerr << "Expect to receive ACK" << std::endl;
                 } else {
                     Tub<WireFormat::Ack> ack(datagram);
                     uint8_t oldCount = decodedBlocks.count();

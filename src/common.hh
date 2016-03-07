@@ -129,7 +129,6 @@ int sendInWireFormat(DCCPSocket* socket,
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
     if (socket->send(raw, sizeof(T)) == -1) {
-        usleep(100000);
         return -1;
     }
 

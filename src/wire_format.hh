@@ -8,6 +8,7 @@
 namespace WireFormat {
 
 enum Opcode : uint8_t {
+    EMPTY               = 0, 
     HANDSHAKE_REQ       = 5,
     HANDSHAKE_RESP      = 6,
     DATA_PACKET         = 7,
@@ -19,7 +20,10 @@ struct Header {
 };
 
 Opcode getOpcode(char* datagram) {
-    return *((Opcode*)datagram);
+    if (datagram)
+        return *((Opcode*)datagram);
+    else
+        return EMPTY;
 }
 
 struct HandshakeReq {
