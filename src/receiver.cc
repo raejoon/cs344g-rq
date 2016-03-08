@@ -153,10 +153,13 @@ void receive(RaptorQDecoder& decoder,
         }
 
         Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
-        decoder.add_symbol(begin,
-                reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
-                dataPacket->id);
-
+        bool added = decoder.add_symbol(begin,
+                   reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
+                   dataPacket->id);
+        if (!added) {
+            continue;
+        }
+        
         begin = blockStart[sbn];
         if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
             // send ACK for block sbn
