@@ -1,7 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <RaptorQ.hpp>
-#include "unistd.h"
+#include <unistd.h>
 
 #include "tub.hh"
 #include "common.hh"
@@ -53,28 +53,13 @@ int parseArgs(int argc,
  *      A reference to a blocking DCCP socket if the handshake procedure
  *      succeeds; nullptr otherwise.
  */
-DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
-                              const std::string& host,
-                              const std::string& port,
-                              const FileWrapper<Alignment>& file)
+std::unique_ptr<DCCPSocket>
+initiateHandshake(const RaptorQEncoder& encoder,
+                  const std::string& host,
+                  const std::string& port,
+                  const FileWrapper<Alignment>& file)
 {
-    DCCPSocket* socket {new DCCPSocket};
-
-    // Check flags
-    /*
-    int flags = fcntl(socket->fd_num(), F_GETFL, 0);
-    if (flags & O_NONBLOCK)
-        std::cerr << "Expect to be blocking!" << std::endl;
-    else
-        std::cerr << "Already set to be blocking!" << std::endl;
-
-    struct timeval tv;
-    socklen_t tv_len;
-    
-    getsockopt(socket->fd_num(), SOL_SOCKET, SO_SNDTIMEO, &tv, &tv_len);  
-    std::cerr << tv.tv_sec << "s " << tv.tv_usec << "us" << std::endl;
-    */
-
+    DCCPSocket* socket = new DCCPSocket;
     socket->connect(Address(host, port));
 
     // Send handshake request
@@ -89,30 +74,15 @@ DCCPSocket* initiateHandshake(const RaptorQEncoder& encoder,
            encoder.OTI_Scheme_Specific());
 
     // Wait for handshake response
-    char* datagram = socket->recv();
-    if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_RESP) {
-        std::cerr << "Expect to receive handshake response" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-
-    Tub<WireFormat::HandshakeResp> resp(datagram);
-    free(datagram);
-    
+    std::unique_ptr<WireFormat::HandshakeResp> resp =
+            receive<WireFormat::HandshakeResp>(socket);
     if (connectionId == resp->connectionId) {
         printf("Received handshake response: {connection id = %u}\n",
                resp->connectionId);
-        return socket;
+        return std::unique_ptr<DCCPSocket>(socket);
     }
 
     return nullptr;
-}
-
-
-void setAllBlocksDecoded(Bitmask256 &decodedBlocks,
-                         uint64_t &encoder_blocks) 
-{
-    for (uint8_t i = 0; i < encoder_blocks; i++)
-        decodedBlocks.set(i);
 }
 
 /**
@@ -136,44 +106,24 @@ void sendSymbol(DCCPSocket *socket,
     struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 0};
 
     while (1) {
-        int rv = poll(&ufds, 1, 30000);
-        if (rv == -1) {
-            perror("poll");
-            exit(EXIT_FAILURE);
-        } else if (rv == 0) {
-            printf("Unable to send or receive in 30 seconds!");
-            exit(EXIT_FAILURE);
-        } else {
-            if (ufds.revents & POLLIN) {
-                if (DEBUG_F)
-                    printf("Poll ready to recv!\n");
-
-                char* datagram = socket->recv();
-                if (!datagram) { // receiver has closed connection
-                    uint8_t oldCount = decodedBlocks.count();
-                    setAllBlocksDecoded(decodedBlocks, progress.workSize);
-                    progress.update(decodedBlocks.count() - oldCount);
-                    break;
-                }
-
-                if (WireFormat::getOpcode(datagram) != WireFormat::ACK) {
-                    std::cerr << "Expect to receive ACK" << std::endl;
-                } else {
-                    Tub<WireFormat::Ack> ack(datagram);
-                    uint8_t oldCount = decodedBlocks.count();
-                    decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
-                    progress.update(decodedBlocks.count() - oldCount);
-                }
+        ufds.revents = 0;
+        SystemCall("poll", poll(&ufds, 1, -1));
+        if (ufds.revents & POLLIN) {
+            std::unique_ptr<WireFormat::Ack> ack =
+                    receive<WireFormat::Ack>(socket);
+            if (!ack) { // receiver has closed connection
+                decodedBlocks.setFirstN(downCast<uint8_t>(progress.workSize));
+                progress.update(decodedBlocks.count());
+                break;
+            } else {
+                decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+                progress.update(decodedBlocks.count());
             }
+        }
 
-            if (ufds.revents & POLLOUT) {
-                if (DEBUG_F)
-                    printf("Poll ready to send!\n");
-
-                if (!sendInWireFormat<WireFormat::DataPacket>(socket,
-                        (*symbolIterator).id(), symbol.data()))
-                   continue;
-
+        if (ufds.revents & POLLOUT) {
+            if (sendInWireFormat<WireFormat::DataPacket>(socket,
+                    (*symbolIterator).id(), symbol.data())) {
                 ++symbolIterator;
                 break;
             }
@@ -271,7 +221,7 @@ int main(int argc, char *argv[])
     encoder->precompute(1, true);
 
     // Initiate handshake process
-    DCCPSocket* socket = initiateHandshake(
+    std::unique_ptr<DCCPSocket> socket = initiateHandshake(
             *encoder, host, port, file);
     if (!socket) {
         printf("Handshake failure!\n");
@@ -279,8 +229,7 @@ int main(int argc, char *argv[])
     }
 
     // Start transmission
-    transmit(*encoder, socket);
+    transmit(*encoder, socket.get());
 
-    free(socket);
     return EXIT_SUCCESS;
 }
