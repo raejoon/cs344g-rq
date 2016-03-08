@@ -120,19 +120,18 @@ bool recv_poll(DCCPSocket* socket)
 }
 
 /**
- * TODO
+ * Serialize an object in its wire format and send it with the socket.
+ *
+ * \return
+ *      True if the object is succesfully sent; False otherwise.
  */
 template<typename T, typename... Args>
-int sendInWireFormat(DCCPSocket* socket,
+bool sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    if (socket->send(raw, sizeof(T)) == -1) {
-        return -1;
-    }
-
-    return 0;
+    return socket->send(raw, sizeof(T)) >= 0;
 }
 
 /**

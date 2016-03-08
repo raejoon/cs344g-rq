@@ -170,8 +170,8 @@ void sendSymbol(DCCPSocket *socket,
                 if (DEBUG_F)
                     printf("Poll ready to send!\n");
 
-                if (sendInWireFormat<WireFormat::DataPacket>(socket,
-                        (*symbolIterator).id(), symbol.data()) == -1)
+                if (!sendInWireFormat<WireFormat::DataPacket>(socket,
+                        (*symbolIterator).id(), symbol.data()))
                    continue;
 
                 ++symbolIterator;
