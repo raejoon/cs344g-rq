@@ -148,7 +148,8 @@ bool pollin(DCCPSocket* socket, int timeoutMs = -1)
     struct pollfd ufds {socket->fd_num(), POLLIN, 0};
     int rv = SystemCall("poll", poll(&ufds, 1, timeoutMs));
     if (rv == 0) {
-        if (DEBUG_F) printf("poll timeout in %d ms!\n", timeoutMs);
+        if (DEBUG_F) 
+            printf("poll timeout in %d ms!\n", timeoutMs);
         return false;
     } else {
         return true;
@@ -268,7 +269,6 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 1;
     // Wait for handshake request and send back handshake response
     std::unique_ptr<WireFormat::HandshakeReq> req;
     std::unique_ptr<DCCPSocket> socket = respondHandshake(req);

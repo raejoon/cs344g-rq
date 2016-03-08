@@ -12,30 +12,60 @@ int DEBUG_F;
 
 void printUsage(char *command) 
 {
-    std::cerr << "Usage: " << command << " HOST [PORT] FILE" << std::endl;
+    std::cerr << "Usage: " << command << " HOST [PORT] FILE [-dh]" << std::endl;
+    std::cerr << "\t-h: help" << std::endl;
+    std::cerr << "\t-d: debug (per-symbol messages instead of a progress bar)" << std::endl;
 }
 
 int parseArgs(int argc,
-              char *argv[],
-              std::string& host,
-              std::string& port,
-              char*& filename)
+        char *argv[],
+        std::string& host,
+        std::string& port,
+        char*& filename)
 {
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
     /* fetch command-line arguments */
-    if ( argc == 3 ) {
+    DEBUG_F = 0;
+    int c;
+
+    int argsNum = 1;
+    while (argsNum < argc) {
+        if (argv[argsNum][0] == '-')
+            break;
+        argsNum++;
+    }
+
+    if (argsNum == 3) {
         host = argv[1];
         port = "6330";
         filename = argv[2];
-    }
-    else if ( argc == 4 ) {
+    } else if (argsNum == 4) {
         host = argv[1];
         port = argv[2];
         filename = argv[3];
+    } else {
+        printUsage(argv[0]);
+        return -1;
     }
-    else {
+
+    optind = argsNum;
+    while ((c = getopt(argc, argv, "dh")) != -1) {
+        switch (c) {
+            case 'd':
+                DEBUG_F = 1;
+                printf("RIGHT\n");
+                break;
+            case 'h':
+            case '?':
+                printUsage(argv[0]);
+                return -1;
+            default:
+                abort();
+        }
+    }
+    if ( optind != argc ) {
         printUsage(argv[0]);
         return -1;
     }
@@ -106,14 +136,13 @@ void sendSymbol(DCCPSocket *socket,
 
     struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 0};
 
+    // usleep(1000);
     while (1) {
         ufds.revents = 0;
         SystemCall("poll", poll(&ufds, 1, -1));
         if (ufds.revents & POLLIN) {
             std::unique_ptr<WireFormat::Ack> ack =
                     receive<WireFormat::Ack>(socket);
-            if (DEBUG_F)
-                printf("Received ACK\n");
 
             if (!ack) { // receiver has closed connection
                 decodedBlocks.setFirstN(downCast<uint8_t>(progress.workSize));
@@ -129,17 +158,20 @@ void sendSymbol(DCCPSocket *socket,
         }
 
         if (ufds.revents & POLLOUT) {
-            if (DEBUG_F)
-                printf("Sent ACK\n");
-
             if (sendInWireFormat<WireFormat::DataPacket>(socket,
                     (*symbolIterator).id(), symbol.data())) {
-                if (DEBUG_F)
-                    printf("Sent id = %u\n", (*symbolIterator).id());
+                if (DEBUG_F) {
+                    uint32_t pktId = (*symbolIterator).id(); 
+                    uint8_t sbn = downCast<uint8_t>(pktId >> 24);
+                    uint32_t esi = (pktId << 8) >> 8;
+                    printf("Sent sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
+                }
+
                 ++symbolIterator;
                 break;
             } else {
-                if (DEBUG_F) printf("sendInWireFormat: failed\n");
+                if (DEBUG_F) 
+                    printf("sendInWireFormat: failed\n");
             }
         }
     }
@@ -227,7 +259,6 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 1;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
