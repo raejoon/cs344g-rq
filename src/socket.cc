@@ -253,15 +253,9 @@ DCCPSocket DCCPSocket::accept( void )
 /* send datagram to connected address */
 int DCCPSocket::send( const char* payload, int payload_len )
 {
-  int bytes_sent;
-
-  bytes_sent = ::send( fd_num(),
-				payload,
-				payload_len,
-				0 ); 
-
-   if (bytes_sent < 0) {
-    // perror("send"); 
+  ssize_t bytes_sent = ::send(fd_num(), payload, payload_len, 0 );
+  if (bytes_sent < 0) {
+//    perror("send");
     return -1;
   }
 

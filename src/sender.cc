@@ -96,6 +96,7 @@ initiateHandshake(const RaptorQEncoder& encoder,
  */
 void sendSymbol(DCCPSocket *socket,
                 RaptorQSymbolIterator &symbolIterator,
+                uint32_t& repairSymbolInterval,
                 Bitmask256 &decodedBlocks,
                 progress_t &progress)
 {
@@ -117,6 +118,9 @@ void sendSymbol(DCCPSocket *socket,
                 break;
             } else {
                 decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+                if (DEBUG_F)
+                    printf("Received ACK, count = %d\n", int(decodedBlocks.count()));
+                repairSymbolInterval = ack->repairSymbolInterval;
                 progress.update(decodedBlocks.count());
             }
         }
@@ -124,8 +128,12 @@ void sendSymbol(DCCPSocket *socket,
         if (ufds.revents & POLLOUT) {
             if (sendInWireFormat<WireFormat::DataPacket>(socket,
                     (*symbolIterator).id(), symbol.data())) {
+                if (DEBUG_F)
+                    printf("Sent id = %u\n", (*symbolIterator).id());
                 ++symbolIterator;
                 break;
+            } else {
+                if (DEBUG_F) printf("sendInWireFormat: failed\n");
             }
         }
     }
@@ -154,14 +162,16 @@ void transmit(RaptorQEncoder& encoder,
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
-            sendSymbol(socket, sourceSymbolIter, decodedBlocks, progress);
+            sendSymbol(socket, sourceSymbolIter, repairSymbolInterval,
+                    decodedBlocks, progress);
             sourceSymbolCounter++;
 
             if (sourceSymbolCounter % repairSymbolInterval == 0) {
                 // Send repair symbols of previous blocks
                 for (uint8_t prevBlock = 0; prevBlock < currBlock; prevBlock++) {
                     if (!decodedBlocks.test(prevBlock)) {
-                        sendSymbol(socket, repairSymbolIters[prevBlock], decodedBlocks, progress);
+                        sendSymbol(socket, repairSymbolIters[prevBlock],
+                                repairSymbolInterval, decodedBlocks, progress);
                     }
                 }
             }
@@ -172,7 +182,8 @@ void transmit(RaptorQEncoder& encoder,
         // Send repair symbols for in round-robin
         for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
             if (!decodedBlocks.test(sbn)) {
-                sendSymbol(socket, repairSymbolIters[sbn], decodedBlocks, progress);
+                sendSymbol(socket, repairSymbolIters[sbn],
+                        repairSymbolInterval, decodedBlocks, progress);
             }
         }
     }
@@ -209,7 +220,6 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 0;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
