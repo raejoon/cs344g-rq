@@ -57,9 +57,11 @@ void* decoderThread(void* decoderThreadArgs) {
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi); 
 
+        pthread_mutex_lock(&threadLock);
         if (decodedBlocks.test(sbn)) {
             continue;
         }
+        pthread_mutex_unlock(&threadLock);
 
         Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
         if (!decoder.add_symbol(begin,
@@ -73,11 +75,10 @@ void* decoderThread(void* decoderThreadArgs) {
             // send ACK for block sbn
             if (DEBUG_F) 
                 printf("Block %u decoded.\n", static_cast<int>(sbn));
-            progress.update(decodedBlocks.count());
 
-            //pthread_mutex_lock(&threadLock);
+            pthread_mutex_lock(&threadLock);
             decodedBlocks.set(sbn);
-            //pthread_mutex_unlock(&threadLock);
+            progress.update(decodedBlocks.count());
             
             // Update the repair symbol transmission interval to be sent in the
             // next ACK
@@ -97,6 +98,7 @@ void* decoderThread(void* decoderThreadArgs) {
                 printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
                         packetLossRate, repairSymbolInterval);
             }
+            pthread_mutex_unlock(&threadLock);
         }
     }
 
@@ -206,6 +208,7 @@ void receive(RaptorQDecoder& decoder,
     Bitmask256 decodedBlocks;
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
+    int decoder_blocks = decoder.blocks();
     // Create decoder thread
     DecoderThreadArgs decoderThreadArgs {&decoder, &blockStart, 
                                          &decodedBlocks, &repairSymbolInterval};
@@ -214,14 +217,25 @@ void receive(RaptorQDecoder& decoder,
 
     std::unique_ptr<WireFormat::DataPacket> dataPacket;
 
-    while (decodedBlocks.count() < decoder.blocks()) {
+    while (1) {
+        pthread_mutex_lock(&threadLock);
+        if (decodedBlocks.count() == decoder_blocks) {
+            break;
+        }
+        pthread_mutex_unlock(&threadLock);
+
         auto currTime = std::chrono::system_clock::now();
         if (currTime > nextAckTime) {
             // Send heartbeat ACK
-            if (DEBUG_F) printf("Sent Heartbeat ACK\n");
+            if (DEBUG_F) 
+                printf("Sent Heartbeat ACK\n");
+
+            pthread_mutex_lock(&threadLock);
             sendInWireFormat<WireFormat::Ack>(socket,
                                               decodedBlocks.bitset,
                                               repairSymbolInterval);
+            pthread_mutex_unlock(&threadLock);
+
             nextAckTime = currTime + HEARTBEAT_INTERVAL;
         }
 
