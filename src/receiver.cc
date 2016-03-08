@@ -145,8 +145,8 @@ void receive(RaptorQDecoder& decoder,
 
     // Create decoder thread
     DecoderThreadArgs decoderThreadArgs {&blockStart, &decodedBlocks, 
-                                         &numSymbolRecv, &maxSymbolRecv,
-                                         &repairSymbolInterval, &progress_t};
+                                         numSymbolRecv, maxSymbolRecv,
+                                         &repairSymbolInterval, &progress};
     pthread_t decoderThreadId;
     pthread_create(&decoderThreadId, NULL, decoderThread, &decoderThreadArgs);
 
@@ -248,7 +248,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    sem_init(&qEmpty, 0 SBN_QUEUE_SIZE);
+    sem_init(&qEmpty, 0, SBN_QUEUE_SIZE);
     sem_init(&qFull, 0, 0);
     pthread_mutex_init(&decodedBlocksLock, NULL);
 
