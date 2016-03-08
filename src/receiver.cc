@@ -1,6 +1,7 @@
 #include <iostream>
 #include <RaptorQ.hpp>
-#include "unistd.h"
+#include <unistd.h>
+#include <semaphore.h>
 
 #include "tub.hh"
 #include "common.hh"
@@ -102,7 +103,7 @@ respondHandshake(std::unique_ptr<WireFormat::HandshakeReq>& req)
     return std::unique_ptr<DCCPSocket>(socket);
 }
 
-void createDecoderThread(std::vector<Alignment*>& blockStart
+void createDecoderThread(std::vector<Alignment*>& blockStart,
                          Bitmask256& decodedBlocks,
                          uint32_t numSymbolRecv[],
                          uint32_t maxSymbolRecv[])
