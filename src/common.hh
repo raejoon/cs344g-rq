@@ -70,7 +70,7 @@ typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
 const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
-        std::chrono::milliseconds(500);
+        std::chrono::milliseconds(10);
 
 // A macro to disallow the copy constructor and operator= functions
 #ifndef DISALLOW_COPY_AND_ASSIGN

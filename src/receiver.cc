@@ -271,6 +271,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv) == -1)
         return EXIT_FAILURE;
 
+    DEBUG_F = 1;
     // Wait for handshake request and send back handshake response
     std::unique_ptr<WireFormat::HandshakeReq> req;
     std::unique_ptr<DCCPSocket> socket = respondHandshake(req);

@@ -111,6 +111,9 @@ void sendSymbol(DCCPSocket *socket,
         if (ufds.revents & POLLIN) {
             std::unique_ptr<WireFormat::Ack> ack =
                     receive<WireFormat::Ack>(socket);
+            if (DEBUG_F)
+                printf("Received ACK\n");
+
             if (!ack) { // receiver has closed connection
                 decodedBlocks.setFirstN(downCast<uint8_t>(progress.workSize));
                 progress.update(decodedBlocks.count());
@@ -122,6 +125,9 @@ void sendSymbol(DCCPSocket *socket,
         }
 
         if (ufds.revents & POLLOUT) {
+            if (DEBUG_F)
+                printf("Sent ACK\n");
+
             if (sendInWireFormat<WireFormat::DataPacket>(socket,
                     (*symbolIterator).id(), symbol.data())) {
                 ++symbolIterator;
@@ -147,7 +153,8 @@ void transmit(RaptorQEncoder& encoder,
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
     uint32_t sourceSymbolCounter = 0;
-    uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
+    // uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
+    uint32_t repairSymbolInterval = 10;
 
     for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
         const auto &block = *encoder.begin().operator++(currBlock);
@@ -209,7 +216,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 0;
+    DEBUG_F = 1;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
