@@ -11,7 +11,6 @@
 #include "socket.hh"
 
 /**
- * TODO: confirm it?
  * The recommended setting of parameter Al in rfc6330 is 32.
  */
 typedef uint32_t Alignment;
@@ -70,7 +69,7 @@ typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
-const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
+const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
         std::chrono::milliseconds(500);
 
 // A macro to disallow the copy constructor and operator= functions
@@ -102,32 +101,19 @@ generateRandom()
     return std::rand();
 }
 
-bool poll(UDPSocket* socket, UDPSocket::received_datagram& datagram)
-{
-    try {
-        struct pollfd ufds {socket->fd_num(), POLLIN, 0};
-        if (SystemCall("poll", poll(&ufds, 1, 0)) == 0) {
-            return false;
-        }
-        datagram = socket->recv();
-        return true;
-    } catch (const unix_error &e) {
-        printf("%s\n", e.what());
-        return false;
-    }
-}
-
 /**
- * TODO
+ * Serialize an object in its wire format and send it with the socket.
+ *
+ * \return
+ *      True if the object is succesfully sent; False otherwise.
  */
 template<typename T, typename... Args>
-void sendInWireFormat(UDPSocket* udpSocket,
-                      const Address& dest,
+bool sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    udpSocket->sendbytesto(dest, raw, sizeof(T));
+    return socket->send(raw, sizeof(T)) >= 0;
 }
 
 /**

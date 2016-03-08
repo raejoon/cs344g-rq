@@ -63,6 +63,7 @@ struct progress_t {
             }
             std::cout << "] "; 
         }
+
         int percentage = static_cast<int>(fraction * 100);
         assert(percentage <= 100);
         std::cout << percentage << " % ";
