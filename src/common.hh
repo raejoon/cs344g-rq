@@ -102,10 +102,20 @@ generateRandom()
 }
 
 /**
+ * TODO(YilongL)
+ */
+template<typename T>
+std::unique_ptr<T> receive(DCCPSocket* socket)
+{
+    char* datagram = socket->recv();
+    return std::unique_ptr<T>(reinterpret_cast<T*>(datagram));
+}
+
+/**
  * Serialize an object in its wire format and send it with the socket.
  *
  * \return
- *      True if the object is succesfully sent; False otherwise.
+ *      True if the object is successfully sent; False otherwise.
  */
 template<typename T, typename... Args>
 bool sendInWireFormat(DCCPSocket* socket,
@@ -158,6 +168,15 @@ struct Bitmask256 {
     void set(uint8_t n, bool value = true)
     {
         bitset[n / 64].set(n % 64, value);
+    }
+
+    /**
+     * Sets first N bits in the bit mask to be 1;
+     */
+    void setFirstN(uint8_t n) {
+        for (uint8_t i = 0; i < n; i++) {
+            set(i);
+        }
     }
 
     /**
