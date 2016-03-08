@@ -13,12 +13,25 @@ const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
 
 int DEBUG_F;
 
-pthread_t decoderThreadId;
 const int SBN_QUEUE_SIZE = 1000;
 uint8_t sbnQueue[SBN_QUEUE_SIZE];
 int qIn = 0, qOut = 0;
 sem_t qEmpty, qFull;
 pthread_mutex_t decodedBlocksLock;
+
+struct DecoderThreadArgs {
+    std::vector<Alignment*>* blockStart;
+    Bitmask256* decodedBlocks;
+    uint32_t* numSymbolRecv;
+    uint32_t* maxSymbolRecv;
+    uint32_t* repairSymbolInterval;
+    progress_t* progress;
+};
+
+void* decoderThread(void* args) {
+    DecoderThreadArgs* decoderThreadArgs = (DecoderThreadArgs*) args;
+    return (void*)decoderThreadArgs;
+}
 
 void printUsage(char *command) 
 {
@@ -103,13 +116,6 @@ respondHandshake(std::unique_ptr<WireFormat::HandshakeReq>& req)
     return std::unique_ptr<DCCPSocket>(socket);
 }
 
-void createDecoderThread(std::vector<Alignment*>& blockStart,
-                         Bitmask256& decodedBlocks,
-                         uint32_t numSymbolRecv[],
-                         uint32_t maxSymbolRecv[])
-{
-}
-
 void receive(RaptorQDecoder& decoder,
              DCCPSocket* socket,
              void* recvfile_start)
@@ -138,8 +144,12 @@ void receive(RaptorQDecoder& decoder,
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
     // Create decoder thread
-    createDecoderThread(blockStart, decodedBlocks, numSymbolRecv, maxSymbolRecv);
-    
+    DecoderThreadArgs decoderThreadArgs {&blockStart, &decodedBlocks, 
+                                         &numSymbolRecv, &maxSymbolRecv,
+                                         &repairSymbolInterval, &progress_t};
+    pthread_t decoderThreadId;
+    pthread_create(&decoderThreadId, NULL, decoderThread, &decoderThreadArgs);
+
     std::unique_ptr<WireFormat::DataPacket> dataPacket;
 
     while (decodedBlocks.count() < decoder.blocks()) {
@@ -207,6 +217,7 @@ void receive(RaptorQDecoder& decoder,
         }
     }
 
+    pthread_join(decoderThreadId, NULL);
     printf("File decoded successfully.\n");
 }
 
@@ -237,6 +248,10 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    sem_init(&qEmpty, 0 SBN_QUEUE_SIZE);
+    sem_init(&qFull, 0, 0);
+    pthread_mutex_init(&decodedBlocksLock, NULL);
+
     // Receive file
     receive(decoder, socket.get(), start);
 
@@ -246,7 +261,6 @@ int main(int argc, char *argv[])
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
 
-    pthread_join(decoderThreadId, NULL);
     sem_destroy(&qEmpty);
     sem_destroy(&qFull);
     pthread_mutex_destroy(&decodedBlocksLock);
