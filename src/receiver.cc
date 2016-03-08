@@ -8,7 +8,7 @@
 #include "progress.hh"
 
 const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
-        2 * HEART_BEAT_INTERVAL;
+        2 * HEARTBEAT_INTERVAL;
 
 int DEBUG_F;
 
@@ -48,6 +48,18 @@ int parseArgs(int argc, char *argv[])
     return 0;
 }
 
+bool pollin(DCCPSocket* socket, int timeoutMs = -1)
+{
+    struct pollfd ufds {socket->fd_num(), POLLIN, 0};
+    int rv = SystemCall("poll", poll(&ufds, 1, timeoutMs));
+    if (rv == 0) {
+        printf("poll timeout in %d ms!", timeoutMs);
+        return false;
+    } else {
+        return true;
+    }
+}
+
 DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
 {
     DCCPSocket* localSocket {new DCCPSocket};
@@ -66,9 +78,8 @@ DCCPSocket* respondHandshake(Tub<WireFormat::HandshakeReq>& req)
     DCCPSocket* socket = new DCCPSocket(std::move(remoteSocket)); 
 
     // Wait for handshake request
-    char* datagram;
-    while (!recv_poll(socket)) {}
-    datagram = socket->recv(); 
+    pollin(socket);
+    char* datagram = socket->recv();
     
     if (WireFormat::getOpcode(datagram) != WireFormat::HANDSHAKE_REQ) {
         std::cerr << "Expect to receive handshake request" << std::endl;
@@ -112,7 +123,7 @@ void receive(RaptorQDecoder& decoder,
     progress.show();
 
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
-        std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
+        std::chrono::system_clock::now() + HEARTBEAT_INTERVAL;
     Bitmask256 decodedBlocks;
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
@@ -121,8 +132,21 @@ void receive(RaptorQDecoder& decoder,
     char* datagram;
 
     while (decodedBlocks.count() < decoder.blocks()) {
-        while (!recv_poll(socket)) {}
-        datagram = socket->recv(); 
+        auto currTime = std::chrono::system_clock::now();
+        if (currTime > nextAckTime) {
+            // Send heartbeat ACK
+            if (DEBUG_F) printf("Sent Heartbeat ACK\n");
+            sendInWireFormat<WireFormat::Ack>(socket,
+                                              decodedBlocks.bitset,
+                                              repairSymbolInterval);
+            nextAckTime = currTime + HEARTBEAT_INTERVAL;
+        }
+
+        if (!pollin(socket,
+                downCast<int>(HEARTBEAT_INTERVAL.count() / 2))) {
+            continue;
+        }
+        datagram = socket->recv();
 
         if (WireFormat::getOpcode(datagram) != WireFormat::Opcode::DATA_PACKET) {
           std::cerr << "Expect to receive DATA packet" << std::endl;
@@ -140,16 +164,6 @@ void receive(RaptorQDecoder& decoder,
         }
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
-
-        auto currTime = std::chrono::system_clock::now();
-        if (currTime > nextAckTime) {
-            // Send heartbeat ACK
-            if (DEBUG_F) printf("Sent Heartbeat ACK\n");
-            sendInWireFormat<WireFormat::Ack>(socket,
-                    decodedBlocks.bitset,
-                    repairSymbolInterval);
-            nextAckTime = currTime + HEART_BEAT_INTERVAL;
-        }
 
         if (decodedBlocks.test(sbn)) {
             continue;
