@@ -16,52 +16,57 @@ read -s -p "Enter ssh password: " PASSWORD_SSH;
 echo ""
 
 DELAY="20"
-echo -e "${DELAY}" >> scp-filesize-test.log
-echo -e "${DELAY}" >> tor-filesize-test.log
+LOSS="0.1"
+COUNT="10"
+echo -e "${DELAY}\n${LOSS}" >> scp-filesize-test.log
+echo -e "${DELAY}\n${LOSS}" >> tor-filesize-test.log
 
-for FILESIZE in `seq 10 10 50`;
+for FILESIZE in `seq 10 10 40`;
   do
 
-    echo "==== Test size: $FILESIZE MBytes ====="
+    echo "==== delay: $DELAY ms, loss: $LOSS, size: $FILESIZE MBytes ===="
 
     # make file
     FILENAME="test.${FILESIZE}M"
     dd if=/dev/urandom of=/tmp/sent/$FILENAME bs=1000000 count=$FILESIZE \
       > /dev/null 2>&1
 
-    # run single instance of scp
-    COMMAND="./scp-mahimahi.sh"
-    ARGS="$FILENAME $PASSWORD_SSH"
-    TIME=`mm-delay $DELAY sh -c "$COMMAND $ARGS"`
+    for IND in `seq 1 1 $COUNT`;
+    do
+      # run single instance of scp
+      COMMAND="./scp-mahimahi.sh"
+      ARGS="$FILENAME $PASSWORD_SSH"
+      TIME=`mm-delay $DELAY mm-loss uplink $LOSS sh -c "$COMMAND $ARGS"`
 
-    # log filesize and time
-    echo -e "${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> scp-filesize-test.log
+      # log filesize and time
+      echo -e "scp\t${FILESIZE}\t${TIME}"
+      echo -e "${FILESIZE},${TIME}" >> scp-filesize-test.log
 
-    diff /tmp/sent/$FILENAME /tmp/received/$FILENAME
-    
-    # run single instance of tornado
-    ../build/receiver > /dev/null &
+      diff /tmp/sent/$FILENAME /tmp/received/$FILENAME
+      rm /tmp/received/$FILENAME
+      
+      # run single instance of tornado
+      ../build/receiver > /dev/null &
 
-    COMMAND="./tornado-mahimahi.sh"
-    ARGS="$FILENAME"
-    TIME=`mm-delay $DELAY sh -c "$COMMAND $ARGS"`
+      COMMAND="./tornado-mahimahi.sh"
+      ARGS="$FILENAME"
+      TIME=`mm-delay $DELAY mm-loss uplink $LOSS sh -c "$COMMAND $ARGS"`
 
-    # log filesize and time
-    echo -e "${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> tor-filesize-test.log
+      # log filesize and time
+      echo -e "tornado\t${FILESIZE}\t${TIME}"
+      echo -e "${FILESIZE},${TIME}" >> tor-filesize-test.log
 
-    #for job in `jobs -p`
-    #do
-    #  wait $job
-    #done
-    pkill receiver
+      #for job in `jobs -p`
+      #do
+      #  wait $job
+      #done
+      pkill receiver
 
-    diff /tmp/sent/$FILENAME ./$FILENAME
+      diff /tmp/sent/$FILENAME ./$FILENAME
+      rm ./$FILENAME
+    done
 
     # cleanup
-    rm ./$FILENAME
-    rm /tmp/received/$FILENAME
     rm /tmp/sent/$FILENAME
   done
 
