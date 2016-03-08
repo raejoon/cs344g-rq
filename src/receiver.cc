@@ -14,10 +14,9 @@ const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
 int DEBUG_F;
 
 const int SHARED_QUEUE_SIZE = 1000;
-std::pair<uint8_t, uint32_t> sharedQueue[SHARED_QUEUE_SIZE];
-
+std::unique_ptr<WireFormat::DataPacket> sharedQ[SHARED_QUEUE_SIZE];
 int qIn = 0, qOut = 0;
-sem_t qEmpty, qFull;
+sem_t qNonfull, qNonempty;
 pthread_mutex_t threadLock;
 
 struct DecoderThreadArgs {
@@ -42,13 +41,34 @@ void* decoderThread(void* decoderThreadArgs) {
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
 
-    uint8_t sbn = 100; // for test
-    uint32_t esi = 10000; // for test
-    while (1) {        
+    std::unique_ptr<WireFormat::DataPacket> dataPacket; 
+    while (1) {
+        sem_wait(&qNonempty);
+        dataPacket = std::move(sharedQ[qOut]); 
+        qOut = (qOut + 1) % SHARED_QUEUE_SIZE;
+        sem_post(&qNonfull);
+
+        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
+        uint32_t esi = (dataPacket->id << 8) >> 8;
+        if (DEBUG_F) {
+            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
+        }
+
         numSymbolRecv[sbn]++;
         maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi); 
+
+        if (decodedBlocks.test(sbn)) {
+            continue;
+        }
+
+        Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
+        if (!decoder.add_symbol(begin,
+                    reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
+                    dataPacket->id)) {
+            continue;
+        }
  
-        Alignment* begin = blockStart[sbn];
+        begin = blockStart[sbn];
         if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
             // send ACK for block sbn
             if (DEBUG_F) 
@@ -209,24 +229,13 @@ void receive(RaptorQDecoder& decoder,
                 downCast<int>(HEARTBEAT_INTERVAL.count() / 2))) {
             continue;
         }
+
         dataPacket = receive<WireFormat::DataPacket>(socket);
-        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
-        uint32_t esi = (dataPacket->id << 8) >> 8;
 
-        if (DEBUG_F) {
-            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
-        }
-
-        if (decodedBlocks.test(sbn)) {
-            continue;
-        }
-
-        Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
-        if (!decoder.add_symbol(begin,
-                    reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
-                    dataPacket->id)) {
-            continue;
-        }
+        sem_wait(&qNonfull);
+        sharedQ[qIn] = std::move(dataPacket);
+        qIn = (qIn + 1) % SHARED_QUEUE_SIZE;
+        sem_post(&qNonempty);
     }
 
     pthread_join(decoderThreadId, NULL);
@@ -260,8 +269,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    sem_init(&qEmpty, 0, SHARED_QUEUE_SIZE);
-    sem_init(&qFull, 0, 0);
+    sem_init(&qNonfull, 0, SHARED_QUEUE_SIZE);
+    sem_init(&qNonempty, 0, 0);
     pthread_mutex_init(&threadLock, NULL);
 
     // Receive file
@@ -273,8 +282,8 @@ int main(int argc, char *argv[])
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
 
-    sem_destroy(&qEmpty);
-    sem_destroy(&qFull);
+    sem_destroy(&qNonfull);
+    sem_destroy(&qNonempty);
     pthread_mutex_destroy(&threadLock);
 
     return EXIT_SUCCESS;
