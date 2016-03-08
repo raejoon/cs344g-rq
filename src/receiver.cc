@@ -8,9 +8,6 @@
 #include "wire_format.hh"
 #include "progress.hh"
 
-const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
-        2 * HEARTBEAT_INTERVAL;
-
 int DEBUG_F;
 
 const int SHARED_QUEUE_SIZE = 10000;
@@ -151,7 +148,7 @@ bool pollin(DCCPSocket* socket, int timeoutMs = -1)
     struct pollfd ufds {socket->fd_num(), POLLIN, 0};
     int rv = SystemCall("poll", poll(&ufds, 1, timeoutMs));
     if (rv == 0) {
-        if (DEBUG_F) printf("poll timeout in %d ms!", timeoutMs);
+        if (DEBUG_F) printf("poll timeout in %d ms!\n", timeoutMs);
         return false;
     } else {
         return true;

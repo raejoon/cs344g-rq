@@ -54,10 +54,10 @@ constexpr uint64_t MAX_FILE_SIZE = MAX_BLOCKS * MAX_SYMBOLS_PER_BLOCK *
  * all the source symbols have been transmitted and none of the blocks has been
  * successfully decoded by the receiver.
  *
- * Right now, we conservatively assume the packet loss rate p is 50%. So the
+ * Right now, we conservatively assume the packet loss rate p is 10%. So the
  * initial interval is set to 1( = (1-p)/p).
  */
-#define INIT_REPAIR_SYMBOL_INTERVAL 1
+#define INIT_REPAIR_SYMBOL_INTERVAL 9
 
 constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / ALIGNMENT_SIZE;
 
@@ -70,7 +70,7 @@ typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
 const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
-        std::chrono::milliseconds(10);
+        std::chrono::milliseconds(50);
 
 // A macro to disallow the copy constructor and operator= functions
 #ifndef DISALLOW_COPY_AND_ASSIGN
