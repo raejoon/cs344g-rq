@@ -12,6 +12,13 @@ const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
 
 int DEBUG_F;
 
+pthread_t decoderThreadId;
+const int SBN_QUEUE_SIZE = 1000;
+uint8_t sbnQueue[SBN_QUEUE_SIZE];
+int qIn = 0, qOut = 0;
+sem_t qEmpty, qFull;
+pthread_mutex_t decodedBlocksLock;
+
 void printUsage(char *command) 
 {
     std::cerr << "Usage: " << command << " [-dh]" << std::endl;
@@ -95,6 +102,13 @@ respondHandshake(std::unique_ptr<WireFormat::HandshakeReq>& req)
     return std::unique_ptr<DCCPSocket>(socket);
 }
 
+void createDecoderThread(std::vector<Alignment*>& blockStart
+                         Bitmask256& decodedBlocks,
+                         uint32_t numSymbolRecv[],
+                         uint32_t maxSymbolRecv[])
+{
+}
+
 void receive(RaptorQDecoder& decoder,
              DCCPSocket* socket,
              void* recvfile_start)
@@ -117,10 +131,14 @@ void receive(RaptorQDecoder& decoder,
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
         std::chrono::system_clock::now() + HEARTBEAT_INTERVAL;
     Bitmask256 decodedBlocks;
+
     uint32_t numSymbolRecv[MAX_BLOCKS] {0};
     uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
+    // Create decoder thread
+    createDecoderThread(blockStart, decodedBlocks, numSymbolRecv, maxSymbolRecv);
+    
     std::unique_ptr<WireFormat::DataPacket> dataPacket;
 
     while (decodedBlocks.count() < decoder.blocks()) {
@@ -153,10 +171,9 @@ void receive(RaptorQDecoder& decoder,
         }
 
         Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
-        bool added = decoder.add_symbol(begin,
-                   reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
-                   dataPacket->id);
-        if (!added) {
+        if (!decoder.add_symbol(begin,
+                    reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
+                    dataPacket->id)) {
             continue;
         }
         
@@ -227,6 +244,11 @@ int main(int argc, char *argv[])
     SystemCall("truncate the padding at the end of the file",
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
+
+    pthread_join(decoderThreadId, NULL);
+    sem_destroy(&qEmpty);
+    sem_destroy(&qFull);
+    pthread_mutex_destroy(&decodedBlocksLock);
 
     return EXIT_SUCCESS;
 }
