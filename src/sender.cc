@@ -18,10 +18,10 @@ void printUsage(char *command)
 }
 
 int parseArgs(int argc,
-        char *argv[],
-        std::string& host,
-        std::string& port,
-        char*& filename)
+              char *argv[],
+              std::string& host,
+              std::string& port,
+              char*& filename)
 {
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
@@ -136,7 +136,6 @@ void sendSymbol(DCCPSocket *socket,
 
     struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 0};
 
-    // usleep(1000);
     while (1) {
         ufds.revents = 0;
         SystemCall("poll", poll(&ufds, 1, -1));
@@ -193,8 +192,7 @@ void transmit(RaptorQEncoder& encoder,
     // Represents blocks that are decoded by the receiver
     Bitmask256 decodedBlocks;
     uint32_t sourceSymbolCounter = 0;
-    // uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
-    uint32_t repairSymbolInterval = 10;
+    uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
     for (uint8_t currBlock = 0; currBlock < encoder.blocks(); currBlock++) {
         const auto &block = *encoder.begin().operator++(currBlock);
