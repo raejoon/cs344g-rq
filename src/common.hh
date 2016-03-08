@@ -69,7 +69,7 @@ typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
-const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
+const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
         std::chrono::milliseconds(500);
 
 // A macro to disallow the copy constructor and operator= functions
@@ -99,24 +99,6 @@ generateRandom()
 {
     std::srand(std::time(0));
     return std::rand();
-}
-
-bool recv_poll(DCCPSocket* socket)
-{
-    struct pollfd ufds {socket->fd_num(), POLLIN, 0};
-    int rv = poll(&ufds, 1, 30000);
-
-    if (rv == -1) {
-        perror("poll");
-    } else if (rv == 0) {
-        printf("Unable to receive in 30 seconds!");
-    } else {
-        if (ufds.revents & POLLIN) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 /**
