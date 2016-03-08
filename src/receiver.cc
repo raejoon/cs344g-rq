@@ -13,24 +13,74 @@ const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
 
 int DEBUG_F;
 
-const int SBN_QUEUE_SIZE = 1000;
-uint8_t sbnQueue[SBN_QUEUE_SIZE];
+const int SHARED_QUEUE_SIZE = 1000;
+std::pair<uint8_t, uint32_t> sharedQueue[SHARED_QUEUE_SIZE];
+
 int qIn = 0, qOut = 0;
 sem_t qEmpty, qFull;
-pthread_mutex_t decodedBlocksLock;
+pthread_mutex_t threadLock;
 
 struct DecoderThreadArgs {
+    RaptorQDecoder* decoder;
     std::vector<Alignment*>* blockStart;
     Bitmask256* decodedBlocks;
-    uint32_t* numSymbolRecv;
-    uint32_t* maxSymbolRecv;
     uint32_t* repairSymbolInterval;
-    progress_t* progress;
 };
 
-void* decoderThread(void* args) {
-    DecoderThreadArgs* decoderThreadArgs = (DecoderThreadArgs*) args;
-    return (void*)decoderThreadArgs;
+void* decoderThread(void* decoderThreadArgs) {
+    DecoderThreadArgs* args = (DecoderThreadArgs*) decoderThreadArgs;
+
+    RaptorQDecoder& decoder = *args->decoder;
+    std::vector<Alignment*>& blockStart = *args->blockStart;
+    Bitmask256& decodedBlocks = *args->decodedBlocks;
+    uint32_t& repairSymbolInterval = *args->repairSymbolInterval;
+
+    // Initialize progress bar
+    progress_t progress {decoder.blocks(), DEBUG_F};
+    progress.show();
+   
+    uint32_t numSymbolRecv[MAX_BLOCKS] {0};
+    uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
+
+    uint8_t sbn = 100; // for test
+    uint32_t esi = 10000; // for test
+    while (1) {        
+        numSymbolRecv[sbn]++;
+        maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi); 
+ 
+        Alignment* begin = blockStart[sbn];
+        if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
+            // send ACK for block sbn
+            if (DEBUG_F) 
+                printf("Block %u decoded.\n", static_cast<int>(sbn));
+            progress.update(decodedBlocks.count());
+
+            //pthread_mutex_lock(&threadLock);
+            decodedBlocks.set(sbn);
+            //pthread_mutex_unlock(&threadLock);
+            
+            // Update the repair symbol transmission interval to be sent in the
+            // next ACK
+            float packetLossRate;
+            if (numSymbolRecv[sbn] == maxSymbolRecv[sbn] + 1) {
+                packetLossRate = 0.0f;
+                repairSymbolInterval = ~0u;
+            } else {
+                packetLossRate = 1.0f -
+                    numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
+                assert(packetLossRate > 0.0f);
+                repairSymbolInterval = static_cast<uint32_t >(std::min(
+                            std::ceil(1.0f / packetLossRate - 1),
+                            1.0f * (((uint32_t)~0u) - 1)));
+            }
+            if (DEBUG_F) {
+                printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
+                        packetLossRate, repairSymbolInterval);
+            }
+        }
+    }
+
+    return NULL;
 }
 
 void printUsage(char *command) 
@@ -131,22 +181,14 @@ void receive(RaptorQDecoder& decoder,
         decoderPaddedSize += decoder.block_size(sbn);
     }
 
-    // Initialize progress bar
-    progress_t progress {decoder.blocks(), DEBUG_F};
-    progress.show();
-
     std::chrono::time_point<std::chrono::system_clock> nextAckTime =
         std::chrono::system_clock::now() + HEARTBEAT_INTERVAL;
     Bitmask256 decodedBlocks;
-
-    uint32_t numSymbolRecv[MAX_BLOCKS] {0};
-    uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
     uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
     // Create decoder thread
-    DecoderThreadArgs decoderThreadArgs {&blockStart, &decodedBlocks, 
-                                         numSymbolRecv, maxSymbolRecv,
-                                         &repairSymbolInterval, &progress};
+    DecoderThreadArgs decoderThreadArgs {&decoder, &blockStart, 
+                                         &decodedBlocks, &repairSymbolInterval};
     pthread_t decoderThreadId;
     pthread_create(&decoderThreadId, NULL, decoderThread, &decoderThreadArgs);
 
@@ -174,8 +216,6 @@ void receive(RaptorQDecoder& decoder,
         if (DEBUG_F) {
             printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
         }
-        numSymbolRecv[sbn]++;
-        maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
 
         if (decodedBlocks.test(sbn)) {
             continue;
@@ -186,34 +226,6 @@ void receive(RaptorQDecoder& decoder,
                     reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
                     dataPacket->id)) {
             continue;
-        }
-        
-        begin = blockStart[sbn];
-        if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
-            // send ACK for block sbn
-            if (DEBUG_F) 
-                printf("Block %u decoded.\n", static_cast<int>(sbn));
-            decodedBlocks.set(sbn);
-            progress.update(decodedBlocks.count());
-
-            // Update the repair symbol transmission interval to be sent in the
-            // next ACK
-            float packetLossRate;
-            if (numSymbolRecv[sbn] == maxSymbolRecv[sbn] + 1) {
-                packetLossRate = 0.0f;
-                repairSymbolInterval = ~0u;
-            } else {
-                packetLossRate = 1.0f -
-                    numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
-                assert(packetLossRate > 0.0f);
-                repairSymbolInterval = static_cast<uint32_t >(std::min(
-                            std::ceil(1.0f / packetLossRate - 1),
-                            1.0f * (((uint32_t)~0u) - 1)));
-            }
-            if (DEBUG_F) {
-                printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
-                        packetLossRate, repairSymbolInterval);
-            }
         }
     }
 
@@ -248,9 +260,9 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    sem_init(&qEmpty, 0, SBN_QUEUE_SIZE);
+    sem_init(&qEmpty, 0, SHARED_QUEUE_SIZE);
     sem_init(&qFull, 0, 0);
-    pthread_mutex_init(&decodedBlocksLock, NULL);
+    pthread_mutex_init(&threadLock, NULL);
 
     // Receive file
     receive(decoder, socket.get(), start);
@@ -263,7 +275,7 @@ int main(int argc, char *argv[])
 
     sem_destroy(&qEmpty);
     sem_destroy(&qFull);
-    pthread_mutex_destroy(&decodedBlocksLock);
+    pthread_mutex_destroy(&threadLock);
 
     return EXIT_SUCCESS;
 }
