@@ -31,11 +31,11 @@ struct progress_t {
     /**
      * Updates the status of the progress bar and displays it.
      *
-     * \param increment
-     *      The unit of increment works that are just completed.
+     * \param completed
+     *      The unit of works that are currently completed.
      */
-    void update(uint64_t increment) {
-        completed += increment;
+    void update(uint64_t completed) {
+        this->completed = completed;
         current = std::chrono::system_clock::now();
         std::chrono::duration<double> diff = current - start;
         elapsed_seconds = diff.count();
