@@ -12,7 +12,9 @@ int DEBUG_F;
 
 void printUsage(char *command) 
 {
-    std::cerr << "Usage: " << command << " HOST [PORT] FILE" << std::endl;
+    std::cerr << "Usage: " << command << " HOST [PORT] FILE [-dh]" << std::endl;
+    std::cerr << "\t-h: help" << std::endl;
+    std::cerr << "\t-d: debug (per-symbol messages instead of a progress bar)" << std::endl;
 }
 
 int parseArgs(int argc,
@@ -25,17 +27,45 @@ int parseArgs(int argc,
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
     /* fetch command-line arguments */
-    if ( argc == 3 ) {
+    DEBUG_F = 0;
+    int c;
+
+    int argsNum = 1;
+    while (argsNum < argc) {
+        if (argv[argsNum][0] == '-')
+            break;
+        argsNum++;
+    }
+
+    if (argsNum == 3) {
         host = argv[1];
         port = "6330";
         filename = argv[2];
-    }
-    else if ( argc == 4 ) {
+    } else if (argsNum == 4) {
         host = argv[1];
         port = argv[2];
         filename = argv[3];
+    } else {
+        printUsage(argv[0]);
+        return -1;
     }
-    else {
+
+    optind = argsNum;
+    while ((c = getopt(argc, argv, "dh")) != -1) {
+        switch (c) {
+            case 'd':
+                DEBUG_F = 1;
+                printf("RIGHT\n");
+                break;
+            case 'h':
+            case '?':
+                printUsage(argv[0]);
+                return -1;
+            default:
+                abort();
+        }
+    }
+    if ( optind != argc ) {
         printUsage(argv[0]);
         return -1;
     }
@@ -95,7 +125,9 @@ initiateHandshake(const RaptorQEncoder& encoder,
  *      of the iterator will be advanced by one after this function is called.
  */
 void sendSymbol(DCCPSocket *socket,
+                UDPSocket* udpSocket,
                 RaptorQSymbolIterator &symbolIterator,
+                uint32_t& repairSymbolInterval,
                 Bitmask256 &decodedBlocks,
                 progress_t &progress)
 {
@@ -103,28 +135,50 @@ void sendSymbol(DCCPSocket *socket,
     auto begin = symbol.begin();
     (*symbolIterator)(begin, symbol.end());
 
-    struct pollfd ufds {socket->fd_num(), POLLIN | POLLOUT, 0};
-
+    struct pollfd ufds[2];
+    ufds[0] = {udpSocket->fd_num(), POLLIN, 0};
+    ufds[1] = {socket->fd_num(), POLLOUT, 0};
     while (1) {
-        ufds.revents = 0;
-        SystemCall("poll", poll(&ufds, 1, -1));
-        if (ufds.revents & POLLIN) {
+        ufds[0].revents = ufds[1].revents = 0;
+        SystemCall("poll", poll(ufds, 2, -1));
+        if (ufds[0].revents & POLLIN) {
             std::unique_ptr<WireFormat::Ack> ack =
-                    receive<WireFormat::Ack>(socket);
+                    receive<WireFormat::Ack>(udpSocket);
+
             if (!ack) { // receiver has closed connection
                 decodedBlocks.setFirstN(downCast<uint8_t>(progress.workSize));
                 progress.update(decodedBlocks.count());
                 break;
             } else {
                 decodedBlocks.bitwiseOr(Bitmask256(ack->bitmask));
+                if (DEBUG_F)
+                    printf("Received ACK, count = %d\n", int(decodedBlocks.count()));
+                repairSymbolInterval = ack->repairSymbolInterval;
                 progress.update(decodedBlocks.count());
             }
         }
 
-        if (ufds.revents & POLLOUT) {
-            if (sendInWireFormat<WireFormat::DataPacket>(socket,
-                    (*symbolIterator).id(), symbol.data())) {
+        if (ufds[1].revents & POLLOUT) {
+            int rv = sendInWireFormat<WireFormat::DataPacket>(
+                    socket, (*symbolIterator).id(), symbol.data());
+            if (rv >= 0) {
+                if (DEBUG_F) {
+                    uint32_t pktId = (*symbolIterator).id(); 
+                    uint8_t sbn = downCast<uint8_t>(pktId >> 24);
+                    uint32_t esi = (pktId << 8) >> 8;
+                    printf("Sent sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
+                }
+
                 ++symbolIterator;
+                usleep(350);
+                break;
+            } else if (rv == -1) {
+                usleep(350);
+                if (DEBUG_F) 
+                    printf("sendInWireFormat: failed\n");
+            } else {
+                decodedBlocks.setFirstN(downCast<uint8_t>(progress.workSize));
+                progress.update(decodedBlocks.count());
                 break;
             }
         }
@@ -132,7 +186,8 @@ void sendSymbol(DCCPSocket *socket,
 }
 
 void transmit(RaptorQEncoder& encoder,
-              DCCPSocket* socket)
+              DCCPSocket* socket,
+              UDPSocket* udpSocket)
 {
     // Initialize progress bar
     progress_t progress {encoder.blocks(), DEBUG_F};
@@ -154,14 +209,17 @@ void transmit(RaptorQEncoder& encoder,
         RaptorQSymbolIterator sourceSymbolIter = block.begin_source();
         for (int esi = 0; esi < block.symbols(); esi++) {
             // Send i-th source symbol of block sbn
-            sendSymbol(socket, sourceSymbolIter, decodedBlocks, progress);
+            sendSymbol(socket, udpSocket, sourceSymbolIter,
+                    repairSymbolInterval, decodedBlocks, progress);
             sourceSymbolCounter++;
 
             if (sourceSymbolCounter % repairSymbolInterval == 0) {
                 // Send repair symbols of previous blocks
                 for (uint8_t prevBlock = 0; prevBlock < currBlock; prevBlock++) {
                     if (!decodedBlocks.test(prevBlock)) {
-                        sendSymbol(socket, repairSymbolIters[prevBlock], decodedBlocks, progress);
+                        sendSymbol(socket, udpSocket,
+                                repairSymbolIters[prevBlock],
+                                repairSymbolInterval, decodedBlocks, progress);
                     }
                 }
             }
@@ -172,7 +230,8 @@ void transmit(RaptorQEncoder& encoder,
         // Send repair symbols for in round-robin
         for (uint8_t sbn = 0; sbn < encoder.blocks(); sbn++) {
             if (!decodedBlocks.test(sbn)) {
-                sendSymbol(socket, repairSymbolIters[sbn], decodedBlocks, progress);
+                sendSymbol(socket, udpSocket, repairSymbolIters[sbn],
+                        repairSymbolInterval, decodedBlocks, progress);
             }
         }
     }
@@ -209,7 +268,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv, host, port, filename) == -1)
         return EXIT_FAILURE;
 
-    DEBUG_F = 0;
+//    DEBUG_F = 1;
     // Read the file to transfer
     FileWrapper<Alignment> file {filename};
     printf("Done reading file\n");
@@ -228,8 +287,13 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
+    // UDPSocket for receiving ACK
+    UDPSocket udpSocket;
+    // TODO: avoid hardcode 6331
+    udpSocket.bind(Address("0", 6331));
+
     // Start transmission
-    transmit(*encoder, socket.get());
+    transmit(*encoder, socket.get(), &udpSocket);
 
     return EXIT_SUCCESS;
 }
