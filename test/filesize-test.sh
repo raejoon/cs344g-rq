@@ -1,11 +1,15 @@
 #!/bin/bash
 
-# kill running receivers
-pkill receiver
+trap "trap - SIGTERM && kill -- -$$" SIGINT
+
+TIMEFORMAT=%R
+DELAY="10"
+LOSS="0"
+COUNT="10"
 
 # make directories
-rm -rf ./scp-filesize-test.log
-rm -rf ./tor-filesize-test.log
+rm scp-filesize-test.log
+rm tor-filesize-test.log
 rm -rf /tmp/received
 rm -rf /tmp/sent
 mkdir /tmp/received
@@ -15,62 +19,49 @@ mkdir /tmp/sent
 read -s -p "Enter ssh password: " PASSWORD_SSH;
 echo ""
 
-DELAY="20"
-LOSS="0.1"
-COUNT="10"
 echo -e "${DELAY}\n${LOSS}" >> scp-filesize-test.log
 echo -e "${DELAY}\n${LOSS}" >> tor-filesize-test.log
 
-for FILESIZE in `seq 10 10 40`;
+for FILESIZE in `seq 10 10 50`;
+do
+  echo "==== delay: $DELAY ms, $FILESIZE MBytes ===="
+
+  #make file
+  FILENAME="test.${FILESIZE}M"
+  dd if=/dev/urandom of=/tmp/sent/${FILENAME} bs=1000000 count=${FILESIZE} > /dev/null 2>&1
+
+  for IND in `seq 1 1 $COUNT`;
   do
+    # run single instance of scp
+    COMMAND="./scp-mahimahi.sh"
+    ARGS="$FILENAME $PASSWORD_SSH"
+    TIME=`mm-delay $DELAY mm-link 12Mbps_trace 12Mbps_trace -- sh -c "$COMMAND $ARGS"`
+    echo -e "scp\t${FILESIZE}\t${TIME}"
+    echo -e "${FILESIZE},${TIME}" >> scp-filesize-test.log
 
-    echo "==== delay: $DELAY ms, loss: $LOSS, size: $FILESIZE MBytes ===="
+    diff /tmp/sent/$FILENAME /tmp/received/$FILENAME
+    rm /tmp/received/$FILENAME
 
-    # make file
-    FILENAME="test.${FILESIZE}M"
-    dd if=/dev/urandom of=/tmp/sent/$FILENAME bs=1000000 count=$FILESIZE \
-      > /dev/null 2>&1
+    # run receiver in mahimahi shell
+    COMMAND="../build/receiver"
+    mm-delay $DELAY mm-link 12Mbps_trace 12Mbps_trace -- sh -c "$COMMAND > /dev/null" &
+    sleep 1
 
-    for IND in `seq 1 1 $COUNT`;
-    do
-      # run single instance of scp
-      COMMAND="./scp-mahimahi.sh"
-      ARGS="$FILENAME $PASSWORD_SSH"
-      TIME=`mm-delay $DELAY mm-loss uplink $LOSS sh -c "$COMMAND $ARGS"`
+    # get device name for outer mahimahi container
+    DEV=$(ifconfig | grep -oE "delay-\b[0-9]+")
 
-      # log filesize and time
-      echo -e "scp\t${FILESIZE}\t${TIME}"
-      echo -e "${FILESIZE},${TIME}" >> scp-filesize-test.log
+    # add ip table entry
+    sudo ip route add 100.64.0.4/32 dev $DEV
 
-      diff /tmp/sent/$FILENAME /tmp/received/$FILENAME
-      rm /tmp/received/$FILENAME
-      
-      # run single instance of tornado
-      ../build/receiver > /dev/null &
+    # run sender
+    TIME=$( { time ../build/sender 100.64.0.4 /tmp/sent/$FILENAME > /dev/null ; } 2>&1 )
+    echo -e "tornado\t${FILESIZE}\t${TIME}"
+    echo -e "${FILESIZE},${TIME}" >> scp-filesize-test.log
 
-      COMMAND="./tornado-mahimahi.sh"
-      ARGS="$FILENAME"
-      TIME=`mm-delay $DELAY mm-loss uplink $LOSS sh -c "$COMMAND $ARGS"`
-
-      # log filesize and time
-      echo -e "tornado\t${FILESIZE}\t${TIME}"
-      echo -e "${FILESIZE},${TIME}" >> tor-filesize-test.log
-
-      #for job in `jobs -p`
-      #do
-      #  wait $job
-      #done
-      pkill receiver
-
-      diff /tmp/sent/$FILENAME ./$FILENAME
-      rm ./$FILENAME
-    done
-
-    # cleanup
-    rm /tmp/sent/$FILENAME
+    sleep 1
+    diff /tmp/sent/$FILENAME ./$FILENAME
+    rm ./$FILENAME
   done
 
-# clean up
-rm -rf /tmp/received
-rm -rf /tmp/sent
-
+  rm /tmp/sent/$FILENAME
+done

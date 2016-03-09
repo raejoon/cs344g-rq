@@ -26,7 +26,8 @@ def main():
   #    fillstyle='none',linewidth=3, label='tornado')
   plt.xlabel('Link loss %')
   plt.ylabel('Completion time (seconds)')
-  plt.title('Filesize : %d MBytes, Link delay %d ms' % (int(filesize), int(delay)), fontsize=22)
+  plt.title('Filesize : %d MBytes, Link delay %d ms, bandwidth 12 Mbits/s'
+      % (int(filesize), int(delay)), fontsize=22)
   plt.legend(loc='best')
   plt.tight_layout()
   plt.savefig('loss-plot.pdf')
