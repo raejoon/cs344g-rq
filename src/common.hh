@@ -70,7 +70,7 @@ typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
 const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
-        std::chrono::milliseconds(50);
+        std::chrono::milliseconds(10);
 
 typedef std::lock_guard<std::mutex> Guard;
 
