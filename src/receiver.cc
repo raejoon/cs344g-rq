@@ -10,101 +10,75 @@
 
 int DEBUG_F;
 
-const int SHARED_QUEUE_SIZE = 10000;
-std::unique_ptr<WireFormat::DataPacket> sharedQ[SHARED_QUEUE_SIZE];
+const int SHARED_QUEUE_SIZE = MAX_BLOCKS * 2;
+std::unique_ptr<WireFormat::DataPacket> symbolQueue[SHARED_QUEUE_SIZE];
 int qIn = 0, qOut = 0;
 sem_t qNonfull, qNonempty;
-pthread_mutex_t decodedBlocksLock, repairSymbolIntervalLock;
 
-struct DecoderThreadArgs {
-    RaptorQDecoder* decoder;
-    std::vector<Alignment*>* blockStart;
-    Bitmask256* decodedBlocks;
-    uint32_t* repairSymbolInterval;
-};
+void decodingLoop(RaptorQDecoder* decoder,      // only accessed from decoderThread
+                  DCCPSocket* socket,           // POSIX thread-safe
+                  const Alignment* fileStart,   // const
+                  Bitmask256* decodedBlocks)    // thread-safe
+{
+    size_t decoderPaddedSize = 0;
+    std::vector<Alignment*> blockStart(decoder->blocks() + 1);
+    blockStart[0] = const_cast<Alignment*>(fileStart);
+    for (uint8_t sbn = 0; sbn < decoder->blocks(); sbn++) {
+        blockStart[sbn + 1] = blockStart[sbn] +
+                              decoder->block_size(sbn) / ALIGNMENT_SIZE;
+        decoderPaddedSize += decoder->block_size(sbn);
+    }
 
-void* decoderThread(void* decoderThreadArgs) {
-    DecoderThreadArgs* args = (DecoderThreadArgs*) decoderThreadArgs;
-
-    RaptorQDecoder& decoder = *args->decoder;
-    std::vector<Alignment*>& blockStart = *args->blockStart;
-    Bitmask256& decodedBlocks = *args->decodedBlocks;
-    uint32_t& repairSymbolInterval = *args->repairSymbolInterval;
+    std::chrono::time_point<std::chrono::system_clock> nextAckTime =
+            std::chrono::system_clock::now() + HEARTBEAT_INTERVAL;
 
     // Initialize progress bar
-    progress_t progress {decoder.blocks(), DEBUG_F};
+    progress_t progress {decoder->blocks(), DEBUG_F};
     progress.show();
-   
-    uint32_t numSymbolRecv[MAX_BLOCKS] {0};
-    uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
 
-    std::unique_ptr<WireFormat::DataPacket> dataPacket; 
     while (1) {
-        if (decodedBlocks.count() == decoder.blocks()) {
+        // Send heartbeat ACK
+        auto currTime = std::chrono::system_clock::now();
+        if (currTime > nextAckTime) {
+            if (DEBUG_F)
+                printf("Sent Heartbeat ACK\n");
+
+            sendInWireFormat<WireFormat::Ack>(
+                    socket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
+            nextAckTime = currTime + HEARTBEAT_INTERVAL;
+        }
+
+        if (decodedBlocks->count() == decoder->blocks()) {
             break;
         }
 
         sem_wait(&qNonempty);
-        dataPacket = std::move(sharedQ[qOut]); 
+        auto dataPacket = std::move(symbolQueue[qOut]);
         qOut = (qOut + 1) % SHARED_QUEUE_SIZE;
         sem_post(&qNonfull);
 
-        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
-        uint32_t esi = (dataPacket->id << 8) >> 8;
-        if (DEBUG_F) {
-            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
-        }
-
-        numSymbolRecv[sbn]++;
-        maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi); 
-
-        if (decodedBlocks.test(sbn)) {
-            continue;
-        }
-
         Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
-        if (!decoder.add_symbol(begin,
-                    reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
-                    dataPacket->id)) {
+        if (!decoder->add_symbol(begin,
+                reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
+                dataPacket->id)) {
             continue;
         }
- 
-        begin = blockStart[sbn];
-        if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
-            // send ACK for block sbn
-            if (DEBUG_F) 
-                printf("Block %u decoded.\n", static_cast<int>(sbn));
 
-            pthread_mutex_lock(&decodedBlocksLock);
-            decodedBlocks.set(sbn);
-            pthread_mutex_unlock(&decodedBlocksLock);
+        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
+        if (!decodedBlocks->test(sbn)) {
+            Alignment* begin =  blockStart[sbn];
+            if (decoder->decode(begin, blockStart[sbn + 1], sbn) > 0) {
+                // send ACK for block sbn
+                if (DEBUG_F)
+                    printf("Block %u decoded.\n", static_cast<int>(sbn));
 
-            progress.update(decodedBlocks.count());
-            
-            // Update the repair symbol transmission interval to be sent in the
-            // next ACK
-            pthread_mutex_lock(&repairSymbolIntervalLock);
-            float packetLossRate;
-            if (numSymbolRecv[sbn] == maxSymbolRecv[sbn] + 1) {
-                packetLossRate = 0.0f;
-                repairSymbolInterval = ~0u;
-            } else {
-                packetLossRate = 1.0f -
-                    numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
-                assert(packetLossRate > 0.0f);
-                repairSymbolInterval = static_cast<uint32_t >(std::min(
-                            std::ceil(1.0f / packetLossRate - 1),
-                            1.0f * (((uint32_t)~0u) - 1)));
+                decodedBlocks->set(sbn);
+                sendInWireFormat<WireFormat::Ack>(
+                        socket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
+                progress.update(decodedBlocks->count());
             }
-            if (DEBUG_F) {
-                printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
-                        packetLossRate, repairSymbolInterval);
-            }
-            pthread_mutex_unlock(&repairSymbolIntervalLock);
         }
     }
-
-    return NULL;
 }
 
 void printUsage(char *command) 
@@ -192,74 +166,37 @@ respondHandshake(std::unique_ptr<WireFormat::HandshakeReq>& req)
 
 void receive(RaptorQDecoder& decoder,
              DCCPSocket* socket,
-             void* recvfile_start)
+             Alignment* recvFileStart)
 {
-    // Start receiving symbols
-    size_t decoderPaddedSize = 0;
-
-    std::vector<Alignment*> blockStart(decoder.blocks() + 1);
-    blockStart[0] = reinterpret_cast<Alignment*>(recvfile_start);
-    for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
-        blockStart[sbn + 1] = blockStart[sbn] +
-            decoder.block_size(sbn) / ALIGNMENT_SIZE;
-        decoderPaddedSize += decoder.block_size(sbn);
-    }
-
-    std::chrono::time_point<std::chrono::system_clock> nextAckTime =
-        std::chrono::system_clock::now() + HEARTBEAT_INTERVAL;
+    const uint8_t numBlocks = decoder.blocks();
     Bitmask256 decodedBlocks;
-    uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
 
-    int decoder_blocks = decoder.blocks();
-    // Create decoder thread
-    DecoderThreadArgs decoderThreadArgs {&decoder, &blockStart, 
-                                         &decodedBlocks, &repairSymbolInterval};
-    pthread_t decoderThreadId;
-    pthread_create(&decoderThreadId, NULL, decoderThread, &decoderThreadArgs);
+    std::thread decoderThread(decodingLoop, &decoder, socket, recvFileStart, &decodedBlocks);
 
     std::unique_ptr<WireFormat::DataPacket> dataPacket;
-
-    while (1) {
-        pthread_mutex_lock(&decodedBlocksLock);
-        if (decodedBlocks.count() == decoder_blocks) {
-            pthread_mutex_unlock(&decodedBlocksLock);
-            break;
-        }
-        pthread_mutex_unlock(&decodedBlocksLock);
-
-        auto currTime = std::chrono::system_clock::now();
-        if (currTime > nextAckTime) {
-            // Send heartbeat ACK
-            if (DEBUG_F) 
-                printf("Sent Heartbeat ACK\n");
-
-            pthread_mutex_lock(&repairSymbolIntervalLock);
-            uint32_t currRepairSymbolInterval = repairSymbolInterval; 
-            pthread_mutex_unlock(&repairSymbolIntervalLock);
-
-            pthread_mutex_lock(&decodedBlocksLock);
-            sendInWireFormat<WireFormat::Ack>(socket,
-                                              decodedBlocks.bitset,
-                                              currRepairSymbolInterval);
-            pthread_mutex_unlock(&decodedBlocksLock);
-
-            nextAckTime = currTime + HEARTBEAT_INTERVAL;
-        }
-
-        if (!pollin(socket,
-                downCast<int>(HEARTBEAT_INTERVAL.count() / 2))) {
+    while (decodedBlocks.count() < numBlocks) {
+        // Receive one symbol
+        if (!pollin(socket)) {
             continue;
         }
-
         dataPacket = receive<WireFormat::DataPacket>(socket);
+        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
+        uint32_t esi = (dataPacket->id << 8) >> 8;
+        if (DEBUG_F) {
+            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
+        }
 
+        if (decodedBlocks.test(sbn)) {
+            // Useless symbol: block already decoded
+            continue;
+        }
         sem_wait(&qNonfull);
-        sharedQ[qIn] = std::move(dataPacket);
+        symbolQueue[qIn] = std::move(dataPacket);
         qIn = (qIn + 1) % SHARED_QUEUE_SIZE;
         sem_post(&qNonempty);
     }
 
-    pthread_join(decoderThreadId, NULL);
+    decoderThread.join();
     printf("File decoded successfully.\n");
 }
 
@@ -292,11 +229,9 @@ int main(int argc, char *argv[])
 
     sem_init(&qNonfull, 0, SHARED_QUEUE_SIZE);
     sem_init(&qNonempty, 0, 0);
-    pthread_mutex_init(&decodedBlocksLock, NULL);
-    pthread_mutex_init(&repairSymbolIntervalLock, NULL);
 
     // Receive file
-    receive(decoder, socket.get(), start);
+    receive(decoder, socket.get(), reinterpret_cast<Alignment*>(start));
 
     SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
     SystemCall("munmap", munmap(start, decoderPaddedSize));
@@ -306,8 +241,6 @@ int main(int argc, char *argv[])
 
     sem_destroy(&qNonfull);
     sem_destroy(&qNonempty);
-    pthread_mutex_destroy(&decodedBlocksLock);
-    pthread_mutex_destroy(&repairSymbolIntervalLock);
 
     return EXIT_SUCCESS;
 }

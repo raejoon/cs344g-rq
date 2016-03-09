@@ -72,6 +72,8 @@ typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
         std::chrono::milliseconds(50);
 
+typedef std::lock_guard<std::mutex> Guard;
+
 // A macro to disallow the copy constructor and operator= functions
 #ifndef DISALLOW_COPY_AND_ASSIGN
 #define DISALLOW_COPY_AND_ASSIGN(TypeName) \
@@ -133,13 +135,17 @@ struct Bitmask256 {
 
     std::bitset<64> bitset[4];
 
+    std::mutex mutex;
+
     Bitmask256()
         : bitset {0, 0, 0, 0}
+        , mutex()
     {}
 
     explicit
     Bitmask256(const uint64_t bitmask[4])
         : bitset {bitmask[0], bitmask[1], bitmask[2], bitmask[3]}
+        , mutex()
     {}
 
     /**
@@ -147,6 +153,7 @@ struct Bitmask256 {
      */
     void bitwiseOr(const Bitmask256& other)
     {
+        Guard _(mutex);
         bitset[0] |= other.bitset[0];
         bitset[1] |= other.bitset[1];
         bitset[2] |= other.bitset[2];
@@ -158,6 +165,7 @@ struct Bitmask256 {
      */
     uint8_t count()
     {
+        Guard _(mutex);
         return downCast<uint8_t>(bitset[0].count() + bitset[1].count()
                 + bitset[2].count() + bitset[3].count());
     }
@@ -167,6 +175,7 @@ struct Bitmask256 {
      */
     void set(uint8_t n, bool value = true)
     {
+        Guard _(mutex);
         bitset[n / 64].set(n % 64, value);
     }
 
@@ -184,7 +193,14 @@ struct Bitmask256 {
      */
     bool test(uint8_t n)
     {
+        Guard _(mutex);
         return bitset[n / 64].test(n % 64);
+    }
+
+    std::array<std::bitset<64>, 4> toBitsetArray() {
+        Guard _(mutex);
+        return std::array<std::bitset<64>, 4>{
+                bitset[0], bitset[1], bitset[2], bitset[3]};
     }
 };
 

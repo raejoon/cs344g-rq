@@ -84,7 +84,7 @@ struct Ack {
     // transmission of the last decoded block.
     uint32_t repairSymbolInterval;
 
-    Ack(std::bitset<64> bitset[4], uint32_t repairSymbolInterval)
+    Ack(std::array<std::bitset<64>, 4> bitset, uint32_t repairSymbolInterval)
         : header {ACK}
         , bitmask {bitset[0].to_ullong(),
                    bitset[1].to_ullong(),
