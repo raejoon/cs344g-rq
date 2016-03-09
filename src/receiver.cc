@@ -1,6 +1,5 @@
 #include <iostream>
 #include <RaptorQ.hpp>
-#include <unistd.h>
 #include <semaphore.h>
 
 #include "tub.hh"
@@ -10,16 +9,20 @@
 
 int DEBUG_F;
 
-const int SHARED_QUEUE_SIZE = MAX_BLOCKS * 2;
+const int SHARED_QUEUE_SIZE = 10000;
 std::unique_ptr<WireFormat::DataPacket> symbolQueue[SHARED_QUEUE_SIZE];
 int qIn = 0, qOut = 0;
 sem_t qNonfull, qNonempty;
 
 void decodingLoop(RaptorQDecoder* decoder,      // only accessed from decoderThread
-                  DCCPSocket* socket,           // POSIX thread-safe
+                  const Address peerAddress,    // const
                   const Alignment* fileStart,   // const
                   Bitmask256* decodedBlocks)    // thread-safe
 {
+    UDPSocket udpSocket;
+    // TODO: avoid hardcode 6331
+    udpSocket.connect(Address(peerAddress.ip(), 6331));
+
     size_t decoderPaddedSize = 0;
     std::vector<Alignment*> blockStart(decoder->blocks() + 1);
     blockStart[0] = const_cast<Alignment*>(fileStart);
@@ -44,7 +47,7 @@ void decodingLoop(RaptorQDecoder* decoder,      // only accessed from decoderThr
                 printf("Sent Heartbeat ACK\n");
 
             sendInWireFormat<WireFormat::Ack>(
-                    socket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
+                    &udpSocket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
             nextAckTime = currTime + HEARTBEAT_INTERVAL;
         }
 
@@ -52,6 +55,7 @@ void decodingLoop(RaptorQDecoder* decoder,      // only accessed from decoderThr
             break;
         }
 
+        // TODO(YilongL): it could block here and not sending ACK in time!
         sem_wait(&qNonempty);
         auto dataPacket = std::move(symbolQueue[qOut]);
         qOut = (qOut + 1) % SHARED_QUEUE_SIZE;
@@ -74,7 +78,7 @@ void decodingLoop(RaptorQDecoder* decoder,      // only accessed from decoderThr
 
                 decodedBlocks->set(sbn);
                 sendInWireFormat<WireFormat::Ack>(
-                        socket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
+                        &udpSocket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
                 progress.update(decodedBlocks->count());
             }
         }
@@ -172,7 +176,9 @@ void receive(RaptorQDecoder& decoder,
     const uint8_t numBlocks = decoder.blocks();
     Bitmask256 decodedBlocks;
 
-    std::thread decoderThread(decodingLoop, &decoder, socket, recvFileStart, &decodedBlocks);
+    std::thread decoderThread(decodingLoop, &decoder, socket->peer_address(),
+            recvFileStart, &decodedBlocks);
+    decoderThread.detach();
 
     std::unique_ptr<WireFormat::DataPacket> dataPacket;
     while (decodedBlocks.count() < numBlocks) {
@@ -197,7 +203,6 @@ void receive(RaptorQDecoder& decoder,
         sem_post(&qNonempty);
     }
 
-    decoderThread.join();
     printf("File decoded successfully.\n");
 }
 
@@ -206,6 +211,7 @@ int main(int argc, char *argv[])
     if (parseArgs(argc, argv) == -1)
         return EXIT_FAILURE;
 
+//    DEBUG_F = 1;
     // Wait for handshake request and send back handshake response
     std::unique_ptr<WireFormat::HandshakeReq> req;
     std::unique_ptr<DCCPSocket> socket = respondHandshake(req);

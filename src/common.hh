@@ -70,7 +70,7 @@ typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
 
 const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
-        std::chrono::milliseconds(10);
+        std::chrono::milliseconds(50);
 
 typedef std::lock_guard<std::mutex> Guard;
 
@@ -113,6 +113,16 @@ std::unique_ptr<T> receive(DCCPSocket* socket)
     return std::unique_ptr<T>(reinterpret_cast<T*>(datagram));
 }
 
+template<typename T>
+std::unique_ptr<T> receive(UDPSocket* socket)
+{
+    UDPSocket::received_datagram datagram = socket->recv();
+    if (datagram.recvlen <= 0) {
+        return nullptr;
+    }
+    return std::unique_ptr<T>(reinterpret_cast<T*>(datagram.payload));
+}
+
 /**
  * Serialize an object in its wire format and send it with the socket.
  *
@@ -120,12 +130,21 @@ std::unique_ptr<T> receive(DCCPSocket* socket)
  *      True if the object is successfully sent; False otherwise.
  */
 template<typename T, typename... Args>
-bool sendInWireFormat(DCCPSocket* socket,
+int sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    return socket->send(raw, sizeof(T)) >= 0;
+    return socket->send(raw, sizeof(T));
+}
+
+template<typename T, typename... Args>
+void sendInWireFormat(UDPSocket* socket,
+                      Args&&... args)
+{
+    char raw[sizeof(T)];
+    new(raw) T(static_cast<Args&&>(args)...);
+    socket->sendbytes(raw, sizeof(T));
 }
 
 /**

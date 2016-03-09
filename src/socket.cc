@@ -127,10 +127,15 @@ UDPSocket::received_datagram UDPSocket::recv( void )
     ts_hdr = CMSG_NXTHDR( &header, ts_hdr );
   }
 
+  char* payload = nullptr;
+  if (recv_len > 0) {
+    payload = new char[recv_len];
+    std::memcpy(payload, msg_payload, recv_len);
+  }
   received_datagram ret = {Address(datagram_source_address,
                                    header.msg_namelen),
                            timestamp,
-                           msg_payload,
+                           payload,
                            recv_len};
 
   return ret;
@@ -256,7 +261,7 @@ int DCCPSocket::send( const char* payload, int payload_len )
   ssize_t bytes_sent = ::send(fd_num(), payload, payload_len, 0 );
   if (bytes_sent < 0) {
     // perror("send");
-    return -1;
+    return errno == EAGAIN ? -1 : -2;
   }
 
   if ( bytes_sent != payload_len ) {
