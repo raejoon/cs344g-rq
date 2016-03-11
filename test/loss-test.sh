@@ -5,11 +5,11 @@ trap "trap - SIGTERM && kill -- -$$" SIGINT
 TIMEFORMAT=%R
 FILESIZE="10"
 DELAY="0"
-COUNT="10"
+COUNT="5"
 
 # make directories
-rm scp-loss-test.log
-rm tor-loss-test.log
+#rm scp-loss-test.log
+#rm tor-loss-test.log
 rm -rf /tmp/received
 rm -rf /tmp/sent
 mkdir /tmp/received
@@ -36,8 +36,9 @@ do
     COMMAND="./scp-mahimahi.sh"
     ARGS="$FILENAME $PASSWORD_SSH"
     TIME=`mm-loss downlink $LOSS mm-link 12Mbps_trace 12Mbps_trace -- sh -c "$COMMAND $ARGS"`
-    echo -e "scp\t${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> scp-loss-test.log
+    #TIME=`mm-delay $DELAY mm-loss downlink $LOSS sh -c "$COMMAND $ARGS"`
+    echo -e "scp\t${LOSS}\t${TIME}"
+    echo -e "${LOSS},${TIME}" >> scp-loss-test.log
 
     diff /tmp/sent/$FILENAME /tmp/received/$FILENAME
     rm /tmp/received/$FILENAME
@@ -45,20 +46,21 @@ do
     # run receiver in mahimahi shell
     COMMAND="../build/receiver"
     mm-loss downlink $LOSS mm-link 12Mbps_trace 12Mbps_trace -- sh -c "$COMMAND > /dev/null" &
+    #mm-delay $DELAY mm-loss downlink $LOSS sh -c "$COMMAND > /dev/null" &
     sleep 1
 
     # get device name for outer mahimahi container
-    DEV=$(ifconfig | grep -oE "loss-\b[0-9]+")
+    DEV=$(ifconfig | grep -oE "delay-\b[0-9]+")
 
     # add ip table entry
     sudo ip route add 100.64.0.4/32 dev $DEV
 
     # run sender
     TIME=$( { time ../build/sender 100.64.0.4 /tmp/sent/$FILENAME > /dev/null ; } 2>&1 )
-    echo -e "tornado\t${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> scp-loss-test.log
+    echo -e "tornado\t${LOSS}\t${TIME}"
+    echo -e "${LOSS},${TIME}" >> tor-loss-test.log
 
-    sleep 1
+    sleep 2
     diff /tmp/sent/$FILENAME ./$FILENAME
     rm ./$FILENAME
   done

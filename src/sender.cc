@@ -277,7 +277,7 @@ int main(int argc, char *argv[])
     std::unique_ptr<RaptorQEncoder> encoder = getEncoder(file);
 
     // Precompute intermediate symbols in background
-    encoder->precompute(1, true);
+    encoder->precompute(0, true);
 
     // Initiate handshake process
     std::unique_ptr<DCCPSocket> socket = initiateHandshake(

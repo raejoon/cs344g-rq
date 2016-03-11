@@ -22,7 +22,7 @@ echo ""
 echo -e "${FILESIZE}\n${LOSS}" >> scp-delay-test.log
 echo -e "${FILESIZE}\n${LOSS}" >> tor-delay-test.log
 
-for DELAY in `seq 10 10 50`;
+for DELAY in `seq 20 20 100`;
 do
   echo "==== delay: $DELAY ms, $FILESIZE MBytes ===="
 
@@ -36,8 +36,8 @@ do
     COMMAND="./scp-mahimahi.sh"
     ARGS="$FILENAME $PASSWORD_SSH"
     TIME=`mm-delay $DELAY mm-link 12Mbps_trace 12Mbps_trace -- sh -c "$COMMAND $ARGS"`
-    echo -e "scp\t${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> scp-delay-test.log
+    echo -e "scp\t${DELAY}\t${TIME}"
+    echo -e "${DELAY},${TIME}" >> scp-delay-test.log
 
     diff /tmp/sent/$FILENAME /tmp/received/$FILENAME
     rm /tmp/received/$FILENAME
@@ -55,8 +55,8 @@ do
 
     # run sender
     TIME=$( { time ../build/sender 100.64.0.4 /tmp/sent/$FILENAME > /dev/null ; } 2>&1 )
-    echo -e "tornado\t${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> scp-delay-test.log
+    echo -e "tornado\t${DELAY}\t${TIME}"
+    echo -e "${DELAY},${TIME}" >> tor-delay-test.log
 
     sleep 1
     diff /tmp/sent/$FILENAME ./$FILENAME

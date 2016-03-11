@@ -4,7 +4,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import common
 
-matplotlib.rcParams.update({'font.size': 22}) 
+matplotlib.rcParams.update({'font.size': 18}) 
 
 def main():
   scp_log = "scp-filesize-test.log"
@@ -23,7 +23,8 @@ def main():
   #    fillstyle='none',linewidth=3, label='tornado')
   plt.xlabel('File size (MBytes)')
   plt.ylabel('Completion time (s)')
-  plt.title('Link delay %d ms, loss %.2f%%, bandwidth 12 Mbits/s' % (delay, loss*100), fontsize=22)
+  plt.xlim(0, 60)
+  plt.title('Link delay %d ms\nLink loss %.2f%%, bandwidth 12 Mbits/s' % (delay,loss*100), fontsize=20)
   plt.legend(loc='best')
   plt.tight_layout()
   plt.savefig('filesize-plot.pdf')

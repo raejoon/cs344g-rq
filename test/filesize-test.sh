@@ -56,7 +56,7 @@ do
     # run sender
     TIME=$( { time ../build/sender 100.64.0.4 /tmp/sent/$FILENAME > /dev/null ; } 2>&1 )
     echo -e "tornado\t${FILESIZE}\t${TIME}"
-    echo -e "${FILESIZE},${TIME}" >> scp-filesize-test.log
+    echo -e "${FILESIZE},${TIME}" >> tor-filesize-test.log
 
     sleep 1
     diff /tmp/sent/$FILENAME ./$FILENAME

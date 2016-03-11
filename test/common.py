@@ -22,6 +22,7 @@ def get_statistics(points):
   y_list = [];
   yerr_list = [];
   for x in sorted(points):
+    print "calculating statisctics for ", x
     x_list.append(x);
     y = sum(points[x])/len(points[x]);
     y_list.append(y);
