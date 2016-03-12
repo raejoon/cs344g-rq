@@ -8,8 +8,8 @@ DELAY="0"
 COUNT="5"
 
 # make directories
-#rm scp-loss-test.log
-#rm tor-loss-test.log
+rm scp-loss-test.log
+rm tor-loss-test.log
 rm -rf /tmp/received
 rm -rf /tmp/sent
 mkdir /tmp/received
@@ -22,7 +22,7 @@ echo ""
 echo -e "${FILESIZE}\n${DELAY}" >> scp-loss-test.log
 echo -e "${FILESIZE}\n${DELAY}" >> tor-loss-test.log
 
-for LOSS in `seq 0.01 0.01 0.05`;
+for LOSS in `seq 0.00 0.01 0.05`;
 do
   echo "==== loss: $LOSS, $FILESIZE MBytes ===="
 
@@ -50,7 +50,7 @@ do
     sleep 1
 
     # get device name for outer mahimahi container
-    DEV=$(ifconfig | grep -oE "delay-\b[0-9]+")
+    DEV=$(ifconfig | grep -oE "loss-\b[0-9]+")
 
     # add ip table entry
     sudo ip route add 100.64.0.4/32 dev $DEV

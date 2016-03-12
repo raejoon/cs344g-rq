@@ -22,7 +22,7 @@ echo ""
 echo -e "${FILESIZE}\n${LOSS}" >> scp-delay-test.log
 echo -e "${FILESIZE}\n${LOSS}" >> tor-delay-test.log
 
-for DELAY in `seq 20 20 100`;
+for DELAY in `seq 0 20 100`;
 do
   echo "==== delay: $DELAY ms, $FILESIZE MBytes ===="
 
