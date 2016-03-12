@@ -35,7 +35,7 @@ def main():
   plt.title('Filesize : %d MBytes\nLink delay %d ms, bandwidth 12 Mbits/s'
       % (int(filesize), int(delay)), fontsize=20)
   plt.legend(loc='best')
-  plt.xlim(0.5, 5.5)
+  plt.xlim(-0.5, 5.5)
   plt.tight_layout()
   plt.savefig('loss-plot.pdf')
   

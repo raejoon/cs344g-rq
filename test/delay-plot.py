@@ -23,7 +23,7 @@ def main():
   #    fillstyle='none',linewidth=3, label='tornado')
   plt.xlabel('Link delay (ms)')
   plt.ylabel('Completion time (s)')
-  plt.xlim(10, 110)
+  plt.xlim(-10, 110)
   plt.title('Filesize %d MBytes\nLink loss %.2f%%, bandwidth 12 Mbits/s' % (int(filesize), loss*100), fontsize=20)
   plt.legend(loc='best')
   plt.tight_layout()
