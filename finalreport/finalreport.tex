@@ -1,0 +1,241 @@
+\documentclass{sig-alternate-10pt}
+
+\usepackage{url, enumitem}
+
+\begin{document}
+
+\title{Tornado Transfer: RaptorQ-based File Transfer Application} 
+\author{ 
+Yilong Li\\
+\texttt{yilongl@cs.stanford.edu} \and 
+Raejoon Jung\\
+\texttt{raejoon@stanford.edu} \and 
+Yu Yan\\ 
+\texttt{yuyan0@stanford.edu} 
+}
+
+\maketitle 
+
+\section{Introduction}
+File transfer requires reliability in the application / transport layer to safely
+replicate a file from one host to another. Even though lower layer protocols
+provide packet-wise reliability, end-to-end principle suggests
+reliability in the application for correctness guarantee. Therefore TCP as a
+reliable bytes stream abstraction has been used for various file transfer
+applications.
+
+We propose Tornado Transfer, a new file transfer application using RaptorQ-based reliable
+transfer protocol instead of TCP. RaptorQ code \cite{raptorq}, a fountain code
+for erasure channels, provide infinite redundancy by generating repair symbols
+on the fly. If a file with $X$ symbols loses $t$ symbols during transit, a
+RaptorQ encoder can generate repair symbols until the decoder retrieves $X$ (or
+slightly more) symbols. As long as the decoder can retrieve $X$ symbols of both
+original or repair symbols, it can reconstruct the original $X$ symbols.
+
+By exploiting this property of RaptorQ, we developed a novel reliable file
+transfer protocol which is simpler than TCP. Since RaptorQ encoder does not
+require any feedback, the protocol modularize reliability and congestion
+control. This was not true for TCP since a TCP ACK was used for both in-order
+reliable transfer and congestion control. Our protocol does not require in-order
+transfer and can keep send data. To exploit the ability of RaptorQ of continuous
+transmission of symbols without per-packet acknowledgements, we introduce
+heartbeat acknowledgement. These heartbeat acknowledgements are scheduled
+independently with the sender and simplify the states of transmissions. 
+
+We integrate this new reliable file transfer protocol with the Data Congestion
+Control Protocol to provide congestion control. This is possible since our
+protocol has a clear demarcation of the reliability feature and congestion
+control feature. Other congestion control algorithms can also be integrated
+easily with our application using UDP sockets.
+
+Using software-emulated links we test our application and compare the
+performance with SCP. Well-maintained SCP outperforms in most cases. However, we
+observe Tornado Transfer can be faster when the link is lossy. With the analysis of
+Tornado Transfer's performance bottleneck and the observation in lossy link scenarios,
+Tornado Transfer seems to be a promising alternative as a file transfer protocol.
+
+Section \ref{s:impl} explains the implementation of the application addressing
+reliability and congestion control in separate subsections. Then, we compare
+Tornado Transfer with SCP in multiple link scenarios in section \ref{s:eval}. Finally,
+we conclude with a summary of our contribution and reflections during the entire
+process.
+
+\section{Implementation}\label{s:impl}
+
+\subsection{Reliable file transfer}
+
+In Tornado Transfer, the reliability guarantee is achieved at the application level by the use of RaptorQ code. This eliminates the need for retransmission at the file transfer application level, which greatly simplifies the design and implementation of a reliable file transfer protocol. In Tornado Transfer, the sender has no need to keep track of exactly what symbols are received by the receiver. Therefore, the ACK message is essentially just a bitmask of 256 bits (256 is the maximum number of blocks specified in RFC 6330) that records which blocks have been successfully decoded by the receiver. Tornado Transfer has a handshake procedure similar to TCP to establish the connection. Once the handshake succeeds, the sender starts sending source symbols of each block in order. Furthermore, in order to compensate for the potential lost symbols, the sender sends one repair symbol for each previously unacknowledged block after every $X$ source symbols. After all source symbols have been sent, the sender simply sends repair symbols for each unacknowledged block in a round-robin fashion. Ideally, the repair symbol transmission interval $X$ should be set to a value such that after all source symbols of block $n$ has been sent, the receiver has received enough symbols for block $n-1$ for decoding. This way, the receiver only needs to keep roughly one block in memory for decoding at a time. The receiver sends back a heartbeat ACK message constantly to compensate for potentially lost ACK messages. Besides, it immediately sends back an ACK message once it decodes a new block to reduce the probability of sender sending more symbols for the decoded blocks. Once the receiver decodes the entire file, it simply exits. The sender will also terminate once it figures out that the receiver exits. This can be done either by relying on the shutdown mechanism of DCCP socket or through an ICMP destination unreachable message generated by the receiver.
+
+There are two important parameters exposed by \texttt{libRaptorQ} through API that allow us to tune the performance of RaptorQ: symbol size and number of symbols per block.
+\begin{enumerate}[label=(\alph*)]
+\item \textbf{Symbol size:} In our current implementation, we choose the symbol size to be 1400 bytes to avoid IP fragmentation. We could potentially choose a larger number to, say, reduce the number of symbols for performance reason  described in the next item. However, the downside of a larger symbol size is that each symbol may be fragmented at the IP layer and the loss of each fragment results in the loss of the entire symbol. In other words, the nice property of digital fountain that every packet received contributes to the decoding of the entire file is no longer preserved. Currently, we have not quantified the effect of a larger symbol size.
+\item \textbf{Number of symbols per block:} The number of symbols per block is critical to the performance of encoding and decoding. Generally speaking, we would like to keep it as small as possible. RFC 6330 does not allow us to explicitly set this value. Instead, we provide a parameter $WS$, the maximum size of a block that can be efficiently decoded in the working memory of the receiver, and RFC 6330 describes the procedure for deriving the number of symbols per block based on it. This parameter derivation algorithm involves lookups into the hardcoded RaptorQ matrices and is not very straightforward. Therefore, our current implementation enumerates parameter $WS$ starting from a small number and increase it by one each time to search for the smallest legal value of the number of symbols per block. In practice, this search procedure is fast enough to be hardly noticeable.
+\end{enumerate}
+
+Our current implementation of Tornado Transfer has two performance bottlenecks which limits its practicality. We briefly describe the problems here and leave the solutions as future work.
+
+\begin{enumerate}[label=(\alph*)]
+\item \textbf{Precomputation:} The most computational expensive in RaptorQ encoding/decoding process is the process of precomputing intermediate symbols for each block. The time complexity of the precomputation is cubic in the number of symbols per block. We currently use a background thread for precomputing intermediate symbols while transmitting symbols. However, this has become a bottleneck for larger file size. For instance, for a file of size 100MB, the smallest number of symbols per block that is legal with respect to RFC 6330 is 296.
+\item \textbf{Decoding:} Once intermediate symbols have been precomputed, even though both encoding and decoding are linear in the number of symbols, decoding tends to fall behind encoding for two reasons. First, encoding is a stream operation that takes constant time to generate the next symbol, while decoding is a batch operation that only happens after enough symbols of a block have been received. Second, decoding is inherently slower than encoding in the current implementation of \texttt{libRaptorQ}. To resolve this problem, we need to either parallelize the decoding process or devise a more efficient decoding algorithm.
+\end{enumerate}
+
+\subsection{Congestion control}
+Tornado Transfer utilizes DCCP, the Datagram Congestion Control Protocol
+\cite{DCCP}, to
+provide congestion control mechanism for unreliable datagrams. DCCP is designed
+to make it easy to deploy delay-sensitive applications, such as streaming media,
+which prefer timeliness to reliability. It is also appropriate for Tornado
+Transfer because we have offered reliability using RaptorQ in the application
+layer. 
+
+There are mainly two categories of congestion control algorithms in DCCP--- CCID
+2 and CCID 3. CCID 2 denotes TCP-like congestion control that describes Additive
+Increase Multiplicative Decrease (AIMD) congestion control mechanism including
+several other features in TCP. CCID 2 is suitable for applications like Tornado
+Transfer that achieve maximum throughput over long term. CCID 3 denotes
+TCP-Friendly Rate Control that describes an rate-controlled congestion control
+mechanism. CCID 3 is suitable for streaming applications due to its lower
+variation in terms of throughput.
+
+We choose to adopt DCCP as transport layer protocol with CCID 2 enabled for the
+sake of its simplicity. DCCP has been in the Linux kernel and creating a DCCP
+socket to send and receive is much like creating a TCP socket. We simply replace
+UDP with DCCP, without having to add congestion control mechanism on top of UDP
+by ourselves.
+
+The drawbacks of using DCCP sockets are notable as well. According to our
+experiments in mahimahi and RFC 5597, NAT (Network Address Translation) support
+for DCCP is not functioning properly, which results in very little use of DCCP.
+Besides, its congestion control mechanism, such as replying ACKs, is hidden from
+us. The black box makes it harder for us to debug when running into problems.
+
+In the future work, we plan to implement congestion control algorithm, e.g.
+LEDBAT (Low Extra Delay Background Transport, \cite{ledbat}), above UDP on our own.
+
+\section{Evaluation} \label{s:eval}
+We test the Tornado Transfer implementation using emulated links generated by
+Mahimahi \cite{mahimahi}. We measure the time spent for sending a file through
+mahimahi with various link parameters. File transfer time via SCP is also
+measured and compared. We observe the transfer time while changing three
+parameters: (1) link loss, (2) link delay, and (3) file size. We fix the link
+bandwidth to 12 Mbps. For each set of parameters, we ran 10 tests and report the
+mean and the standard deviation in the following plots.
+
+\subsection{Link loss test}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.5\textwidth]{loss-plot}
+  \caption{Transfer time in lossy link}
+  \label{f:loss-plot}
+\end{figure}
+
+Figure \ref{f:loss-plot} depicts the file transfer time using Tornado Transfer and SCP in
+links with various packet loss probabilities. When the loss probability is
+$\geq$ 1\%, transfer time of Tornado Transfer and SCP monotonically increase as the loss
+probability increases. However the growth of Tornado Transfer's transmission time is much
+less than SCP's transfer time. This results in a faster transfer time with
+Tornado Transfer in loss probabilities of $\geq$ 2\% and the gap between the transfer time
+of the two protocols gets wider as the loss probability increases.A
+
+One interesting fact that we noticed is the transfer time using Tornado Transfer when
+the loss probability is 0, i.e., the link is lossless. The average transfer time of
+Tornado Transfer exceeds 14 seconds which is greater than $2\times$ compared to the case
+when the link has 1\% loss probability. This is counter-intuitive since we
+expect that packet loss can only deteriorate the operation of the file transfer
+protocol. Currently, we do not have a clear explanation of this observation and
+leave to future work to enhance the implementation to gracefully degrade
+performance as the link probability increases.
+
+
+\subsection{Link delay test}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.5\textwidth]{delay-plot}
+  \caption{Transfer time in link with delay. One way delays are stated.}
+  \label{f:delay-plot}
+\end{figure}
+
+Figure \ref{f:delay-plot} shows the file transfer time in links with various
+delay values. Throughout delay values from 0 to 100 ms, SCP maintains $\sim
+2\times$ performance of Tornado Transfer. However, the difference of the transfer time is
+almost constant in this delay range. In fact, the difference slightly decreases
+as the delay increases. 
+
+We first suspected the stage of computing intermediate symbols in Tornado Transfer to
+cause this difference since this portion of the protocol requires extensive
+computation and is done before the datagram transfer loop.  However, we have
+confirmed that the progress of sending datagram was widely spread across the
+application runtime rather than having a burst of datagram transfers after a
+long pause as we expect if the intermediate symbol computation was the
+bottleneck. From this observation, we expect this difference comes from the
+inefficiency of our implementation of the datagram transfer loop rather than
+caused by the inefficiency of the design of the protocol.
+
+\subsection{File size test}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.5\textwidth]{filesize-plot}
+  \caption{Transfer time with various file sizes}
+  \label{f:filesize-plot}
+\end{figure}
+
+Figure \ref{f:filesize-plot} depicts the file transfer time using Tornado Transfer and
+SCP with various file sizes when the link is lossless and has a one-way delay of
+10ms. We tested with file sizes of 10, 20, 30, 40, and 50 MBs. In this range,
+SCP transfers files faster than Tornado Transfer. Even though Tornado Transfer's transmission time does
+not monotonically increase as the file size increases, the difference between
+the transfer time of SCP and Tornado Transfer tends to increase.
+
+The fact that Tornado Transfer's transmission time not increasing monotonically is also
+noteworthy. We suspect that this is caused by the \texttt{libRaptorQ}'s internal
+decision to set the number of blocks given a file size. Since we have no control
+on the number of symbols per block since the size of a block can change
+depending on \texttt{libRaptorQ}'s decision while we fix the symbol size. For
+improvement, we can split the file into subfiles of fixed size and feed them
+into multiple instances of encoders. Then we can expect regular performance
+throughout the encoders. We leave the validation of the hypothesis and the
+improvement for future work.
+
+\section{Conclusion}
+We implemented a file transfer protocol using RaptorQ. There are various open
+source implementation of the RaptorQ encoder and decoder. However, to the best
+of our knowledge this is the first open source project that attempts to
+implement a file transfer protocol using RaptorQ. 
+
+By exploiting RaptorQ, we have designed a novel reliable transfer protocol which
+requires significantly less states than TCP. The design makes a clear division
+of providing reliability and congestion control. With this property, we attempted
+to use DCCP kernel module with our reliable transfer protocol.
+
+We compared the performance of Tornado Transfer with SCP over various link scenarios and
+file sizes. Although SCP still outperforms Tornado Transfer in most cases, we have
+confirmed that Tornado Transfer can be faster when the link is lossy. This observation
+with the observation that Tornado Transfer and SCP tends to have constant time difference
+in other scenarios makes Tornado Transfer promising if the improvements mentioned in this
+paper were made.
+
+The two major issues that we gone through with significant amount of time during
+development was (1) design of the reliable file transfer and (2) integration of
+DCCP with Tornado Transfer. In retrospect, the process would have been faster if we have
+carefully designed the entire file transfer protocol before writing any code.
+Files as a series of blocks rather than a long series of symbols made the
+transfer protocol trickier than we imagined. 
+
+While former was an issue of careless approach to design, the later was an issue
+caused by insufficient information. Although we knew DCCP was an option that was
+already provided by the kernel, we didn't know the exact operation or support
+features in the current kernel module. Using DCCP as a black box made
+identifying bottlenecks caused by the network hard once we implemented the
+entire application.
+
+Given the lesson we went through and the information we got from our current
+implementation, we expect an improved version of our applications with a
+simpler design and enhanced transfer speed in the future. 
+
+\bibliography{finalreport}
+\bibliographystyle{acm}
+
+\end{document}

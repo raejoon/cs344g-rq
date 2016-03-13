@@ -1,36 +1,109 @@
-
-#include <chrono>
 #include <iostream>
 #include <RaptorQ.hpp>
+#include <semaphore.h>
 
 #include "tub.hh"
 #include "common.hh"
 #include "wire_format.hh"
 #include "progress.hh"
 
-const static std::chrono::duration<int64_t, std::milli> HEART_BEAT_INTERVAL =
-        std::chrono::milliseconds(500);
+int DEBUG_F;
 
-const static std::chrono::duration<int64_t, std::milli> TEAR_DOWN_DURATION =
-        2 * HEART_BEAT_INTERVAL;
+const int SHARED_QUEUE_SIZE = 10000;
+std::unique_ptr<WireFormat::DataPacket> symbolQueue[SHARED_QUEUE_SIZE];
+int qIn = 0, qOut = 0;
+sem_t qNonfull, qNonempty;
 
-void printUsage(char *command) {
+void decodingLoop(RaptorQDecoder* decoder,      // only accessed from decoderThread
+                  const Address peerAddress,    // const
+                  const Alignment* fileStart,   // const
+                  Bitmask256* decodedBlocks)    // thread-safe
+{
+    UDPSocket udpSocket;
+    // TODO: avoid hardcode 6331
+    udpSocket.connect(Address(peerAddress.ip(), 6331));
+
+    size_t decoderPaddedSize = 0;
+    std::vector<Alignment*> blockStart(decoder->blocks() + 1);
+    blockStart[0] = const_cast<Alignment*>(fileStart);
+    for (uint8_t sbn = 0; sbn < decoder->blocks(); sbn++) {
+        blockStart[sbn + 1] = blockStart[sbn] +
+                              decoder->block_size(sbn) / ALIGNMENT_SIZE;
+        decoderPaddedSize += decoder->block_size(sbn);
+    }
+
+    std::chrono::time_point<std::chrono::system_clock> nextAckTime =
+            std::chrono::system_clock::now() + HEARTBEAT_INTERVAL;
+
+    // Initialize progress bar
+    progress_t progress {decoder->blocks(), DEBUG_F};
+    progress.show();
+
+    while (1) {
+        // Send heartbeat ACK
+        auto currTime = std::chrono::system_clock::now();
+        if (currTime > nextAckTime) {
+            if (DEBUG_F)
+                printf("Sent Heartbeat ACK\n");
+
+            sendInWireFormat<WireFormat::Ack>(
+                    &udpSocket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
+            nextAckTime = currTime + HEARTBEAT_INTERVAL;
+        }
+
+        if (decodedBlocks->count() == decoder->blocks()) {
+            break;
+        }
+
+        // TODO(YilongL): it could block here and not sending ACK in time!
+        sem_wait(&qNonempty);
+        auto dataPacket = std::move(symbolQueue[qOut]);
+        qOut = (qOut + 1) % SHARED_QUEUE_SIZE;
+        sem_post(&qNonfull);
+
+        Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
+        if (!decoder->add_symbol(begin,
+                reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
+                dataPacket->id)) {
+            continue;
+        }
+
+        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
+        if (!decodedBlocks->test(sbn)) {
+            Alignment* begin =  blockStart[sbn];
+            if (decoder->decode(begin, blockStart[sbn + 1], sbn) > 0) {
+                // send ACK for block sbn
+                if (DEBUG_F)
+                    printf("Block %u decoded.\n", static_cast<int>(sbn));
+
+                decodedBlocks->set(sbn);
+                sendInWireFormat<WireFormat::Ack>(
+                        &udpSocket, decodedBlocks->toBitsetArray(), INIT_REPAIR_SYMBOL_INTERVAL);
+                progress.update(decodedBlocks->count());
+            }
+        }
+    }
+}
+
+void printUsage(char *command) 
+{
     std::cerr << "Usage: " << command << " [-dh]" << std::endl;
     std::cerr << "\t-h: help" << std::endl;
     std::cerr << "\t-d: debug (per-symbol messages instead of a progress bar)" << std::endl;
 }
 
-int checkArgs(int argc, char *argv[]) {
+int parseArgs(int argc, char *argv[]) 
+{
     /* check the command-line arguments */
     if ( argc < 1 ) { abort(); } /* for sticklers */
 
     // check options
-    int debug_f = 0;
+    DEBUG_F = 0;
     int c = 0;
     while ((c = getopt(argc, argv, "dh")) != -1) {
         switch (c) {
             case 'd':
-                debug_f = 1;
+                DEBUG_F = 1;
                 break;
             case 'h':
             case '?':
@@ -41,159 +114,140 @@ int checkArgs(int argc, char *argv[]) {
         }
     }
     if ( optind != argc ) {
-      printUsage(argv[0]);
+        printUsage(argv[0]);
         return -1;
     }
-    return debug_f;
+
+    return 0;
 }
 
-int main( int argc, char *argv[] )
+bool pollin(DCCPSocket* socket, int timeoutMs = -1)
 {
-    int debug_f;
-    if ((debug_f = checkArgs(argc, argv)) == -1) return EXIT_FAILURE;
+    struct pollfd ufds {socket->fd_num(), POLLIN, 0};
+    int rv = SystemCall("poll", poll(&ufds, 1, timeoutMs));
+    if (rv == 0) {
+        if (DEBUG_F) 
+            printf("poll timeout in %d ms!\n", timeoutMs);
+        return false;
+    } else {
+        return true;
+    }
+}
 
-    // Wait for handshake request and send back handshake response
-    std::unique_ptr<UDPSocket> udpSocket{new UDPSocket};
+std::unique_ptr<DCCPSocket>
+respondHandshake(std::unique_ptr<WireFormat::HandshakeReq>& req)
+{
+    DCCPSocket localSocket;
     try {
-        udpSocket->bind(Address("0", 6330));
+        localSocket.bind(Address("0", 6330));
     }
     catch (unix_error e) {
-        std::cerr << "Port 6330 is already used. Picking a random port..." << std::endl;
-        udpSocket->bind(Address("0", 0));
+        std::cerr << "Port 6330 is already used. ";
+        std::cerr << "Picking a random port..." << std::endl;
+        localSocket.bind(Address("0", 0));
     }
-    printf("%s\n", udpSocket->local_address().to_string().c_str());
+    printf("%s\n", localSocket.local_address().to_string().c_str());
 
-    UDPSocket::received_datagram datagram = udpSocket->recv();
-    Address senderAddr = datagram.source_address;
-    Tub<WireFormat::HandshakeReq> req(datagram.payload);
-    printf("Recevied handshake request: {connection Id = %u, file name = %s, "
-            "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
-            req->connectionId, req->fileName, req->fileSize, req->otiCommon,
-            req->otiScheme);
+    localSocket.listen();
+    DCCPSocket* socket = new DCCPSocket(localSocket.accept());
+
+    // Wait for handshake request
+    pollin(socket);
+    req = receive<WireFormat::HandshakeReq>(socket);
+
+    printf("Received handshake request: {connection id = %u, file name = %s, "
+           "file size = %zu, OTI_COMMON = %lu, OTI_SCHEME_SPECIFIC = %u}\n",
+           req->connectionId, req->fileName, req->fileSize, req->otiCommon,
+           req->otiScheme);
+
+    // Send handshake response
     sendInWireFormat<WireFormat::HandshakeResp>(
-            udpSocket.get(), senderAddr, uint32_t(req->connectionId));
+            socket, uint32_t(req->connectionId));
+    printf("Sent handshake response: {connection id = %u}\n",
+            req->connectionId);
 
+    return std::unique_ptr<DCCPSocket>(socket);
+}
+
+void receive(RaptorQDecoder& decoder,
+             DCCPSocket* socket,
+             Alignment* recvFileStart)
+{
+    const uint8_t numBlocks = decoder.blocks();
+    Bitmask256 decodedBlocks;
+
+    std::thread decoderThread(decodingLoop, &decoder, socket->peer_address(),
+            recvFileStart, &decodedBlocks);
+    decoderThread.detach();
+
+    std::unique_ptr<WireFormat::DataPacket> dataPacket;
+    while (decodedBlocks.count() < numBlocks) {
+        // Receive one symbol
+        if (!pollin(socket)) {
+            continue;
+        }
+        dataPacket = receive<WireFormat::DataPacket>(socket);
+        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
+        uint32_t esi = (dataPacket->id << 8) >> 8;
+        if (DEBUG_F) {
+            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn), esi);
+        }
+
+        if (decodedBlocks.test(sbn)) {
+            // Useless symbol: block already decoded
+            continue;
+        }
+        sem_wait(&qNonfull);
+        symbolQueue[qIn] = std::move(dataPacket);
+        qIn = (qIn + 1) % SHARED_QUEUE_SIZE;
+        sem_post(&qNonempty);
+    }
+
+    printf("File decoded successfully.\n");
+}
+
+int main(int argc, char *argv[])
+{
+    if (parseArgs(argc, argv) == -1)
+        return EXIT_FAILURE;
+
+//    DEBUG_F = 1;
+    // Wait for handshake request and send back handshake response
+    std::unique_ptr<WireFormat::HandshakeReq> req;
+    std::unique_ptr<DCCPSocket> socket = respondHandshake(req);
+
+    // Set up the RaptorQ decoder
+    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
+    size_t decoderPaddedSize = 0;
+    for (int i = 0; i < decoder.blocks(); i++) {
+        decoderPaddedSize += decoder.block_size(i);
+    }
 
     // Create the receiving file
     int fd = SystemCall("open the file to be written",
-            open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
-    size_t paddedSize = getPaddedSize(req->fileSize);
-    SystemCall("Stretch the file: lseek", lseek(fd, paddedSize - 1, SEEK_SET));
-    SystemCall("Stretch the file: write a NULL char", write(fd, "", 1));
-    void* start = mmap(NULL, paddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
+             open(req->fileName, O_RDWR | O_CREAT | O_TRUNC, (mode_t)0600));
+    SystemCall("lseek", lseek(fd, decoderPaddedSize - 1, SEEK_SET));
+    SystemCall("write", write(fd, "", 1));
+    void* start = mmap(NULL, decoderPaddedSize, PROT_WRITE, MAP_SHARED, fd, 0);
     if (start == MAP_FAILED) {
         printf("mmap failed:%s\n", strerror(errno));
         return EXIT_FAILURE;
     }
 
-    // Initialize progress bar
-    progress_t progress {req->fileSize};
-    progress.show();
+    sem_init(&qNonfull, 0, SHARED_QUEUE_SIZE);
+    sem_init(&qNonempty, 0, 0);
 
-    // Start receiving symbols
-    RaptorQDecoder decoder(req->otiCommon, req->otiScheme);
-    std::vector<Alignment*> blockStart(decoder.blocks() + 1);
-    blockStart[0] = reinterpret_cast<Alignment*>(start);
-    for (uint8_t sbn = 0; sbn < decoder.blocks(); sbn++) {
-        blockStart[sbn + 1] = blockStart[sbn] +
-                              decoder.block_size(sbn) / sizeof(Alignment);
-    }
+    // Receive file
+    receive(decoder, socket.get(), reinterpret_cast<Alignment*>(start));
 
-    std::chrono::time_point<std::chrono::system_clock> nextAckTime =
-            std::chrono::system_clock::now() + HEART_BEAT_INTERVAL;
-    Bitmask256 decodedBlocks;
-    uint32_t numSymbolRecv[MAX_BLOCKS] {0};
-    uint32_t maxSymbolRecv[MAX_BLOCKS] {0};
-    uint32_t repairSymbolInterval = INIT_REPAIR_SYMBOL_INTERVAL;
-    while (decodedBlocks.count() < decoder.blocks()) {
-        datagram = udpSocket->recv();
-        Tub<WireFormat::DataPacket> dataPacket(datagram.payload);
-        uint8_t sbn = downCast<uint8_t>(dataPacket->id >> 24);
-        uint32_t esi = (dataPacket->id << 8) >> 8;
-
-        if (debug_f) {
-            printf("Received sbn = %u, esi = %u\n", static_cast<uint32_t>(sbn),
-                   esi);
-        }
-        numSymbolRecv[sbn]++;
-        maxSymbolRecv[sbn] = std::max(maxSymbolRecv[sbn], esi);
-
-        auto currTime = std::chrono::system_clock::now();
-        if (currTime > nextAckTime) {
-            // Send heartbeat ACK
-            if (debug_f) printf("Sent Heartbeat ACK\n");
-            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
-                                              decodedBlocks.bitset,
-                                              repairSymbolInterval);
-            nextAckTime = currTime + HEART_BEAT_INTERVAL;
-        }
-
-        if (decodedBlocks.test(sbn)) {
-            continue;
-        }
-
-        Alignment* begin = reinterpret_cast<Alignment*>(dataPacket->raw);
-        decoder.add_symbol(begin,
-                reinterpret_cast<Alignment*>(dataPacket->raw + SYMBOL_SIZE),
-                dataPacket->id);
-        progress.update(SYMBOL_SIZE);
-
-        begin = blockStart[sbn];
-        if (decoder.decode(begin, blockStart[sbn + 1], sbn) > 0) {
-            // send ACK for block sbn
-            if (debug_f) printf("Block %u decoded.\n", static_cast<int>(sbn));
-            decodedBlocks.set(sbn);
-
-            // Update the repair symbol transmission interval to be sent in the
-            // next ACK
-            float packetLossRate;
-            if (numSymbolRecv[sbn] == maxSymbolRecv[sbn] + 1) {
-                packetLossRate = 0.0f;
-                repairSymbolInterval = ~0u;
-            } else {
-                packetLossRate = 1.0f -
-                        numSymbolRecv[sbn] * 1.0f / (maxSymbolRecv[sbn] + 1);
-                assert(packetLossRate > 0.0f);
-                repairSymbolInterval = static_cast<uint32_t >(std::min(
-                        std::ceil(1.0f / packetLossRate - 1),
-                        1.0f * (((uint32_t)~0u) - 1)));
-            }
-            if (debug_f) {
-                printf("Packet loss rate = %.2f, Repair symbol interval = %u.\n",
-                       packetLossRate, repairSymbolInterval);
-            }
-        }
-    }
-
-    SystemCall("msync", msync(start, paddedSize, MS_SYNC));
-    SystemCall("munmap", munmap(start, paddedSize));
+    SystemCall("msync", msync(start, decoderPaddedSize, MS_SYNC));
+    SystemCall("munmap", munmap(start, decoderPaddedSize));
     SystemCall("truncate the padding at the end of the file",
             ftruncate(fd, req->fileSize));
     SystemCall("close fd", close(fd));
 
-    assert(decodedBlocks.count() == decoder.blocks());
-    printf("File decoded successfully.\n");
-
-    // Teardown phase: keep sending ACK until the sender becomes quite for a while
-
-    // Clean up the udp socket receiving buffer first
-    fcntl(udpSocket->fd_num(), F_SETFL, O_NONBLOCK);
-    while (poll(udpSocket.get(), datagram)) { }
-    std::chrono::time_point<std::chrono::system_clock> stopTime =
-            std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
-    while (true) {
-        if (poll(udpSocket.get(), datagram)) {
-            stopTime = std::chrono::system_clock::now() + TEAR_DOWN_DURATION;
-        }
-
-        if (std::chrono::system_clock::now() < stopTime) {
-            sendInWireFormat<WireFormat::Ack>(udpSocket.get(), senderAddr,
-                                              decodedBlocks.bitset, ~0u);
-            std::this_thread::sleep_for(HEART_BEAT_INTERVAL);
-        } else {
-            break;
-        }
-    }
+    sem_destroy(&qNonfull);
+    sem_destroy(&qNonempty);
 
     return EXIT_SUCCESS;
 }

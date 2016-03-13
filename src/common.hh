@@ -2,14 +2,15 @@
 #define COMMON_HH
 
 #include <bitset>
+#include <chrono>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/poll.h>
 
 #include "socket.hh"
 
 /**
- * TODO: confirm it?
  * The recommended setting of parameter Al in rfc6330 is 32.
  */
 typedef uint32_t Alignment;
@@ -22,16 +23,27 @@ typedef uint32_t Alignment;
 #define MAX_FILENAME_LEN 64
 
 /**
- * TODO:
  * Configure the size of a symbol as the maximum number of bytes that doesn't
- * result in IP fragmentation.
+ * result in IP fragmentation. It must be a multiple of the ALIGNMENT_SIZE.
  */
-#define SYMBOL_SIZE 8192
+constexpr size_t SYMBOL_SIZE = (1400 / ALIGNMENT_SIZE) * ALIGNMENT_SIZE;
 
 /**
  * The maximum number of blocks is 256, which can be fit into a uint8_t integer.
  */
 #define MAX_BLOCKS 256
+
+/**
+ * The maximum number of symbols in a source block is 56403.
+ */
+#define MAX_SYMBOLS_PER_BLOCK 56403
+
+/**
+ * Given our choice of SYMBOL_SIZE to avoid IP fragmentation, the maximum size
+ * of the file we can support is 20214835200 bytes, or ~20GBs.
+ */
+constexpr uint64_t MAX_FILE_SIZE = MAX_BLOCKS * MAX_SYMBOLS_PER_BLOCK *
+        SYMBOL_SIZE;
 
 /**
  * Initial value of the repair symbol transmission interval. It must be set
@@ -42,10 +54,10 @@ typedef uint32_t Alignment;
  * all the source symbols have been transmitted and none of the blocks has been
  * successfully decoded by the receiver.
  *
- * Right now, we conservatively assume the packet loss rate p is 50%. So the
+ * Right now, we conservatively assume the packet loss rate p is 10%. So the
  * initial interval is set to 1( = (1-p)/p).
  */
-#define INIT_REPAIR_SYMBOL_INTERVAL 1
+#define INIT_REPAIR_SYMBOL_INTERVAL 9
 
 constexpr size_t NUM_ALIGN_PER_SYMBOL = SYMBOL_SIZE / ALIGNMENT_SIZE;
 
@@ -56,6 +68,11 @@ typedef RaptorQ::Encoder<Alignment*, Alignment*> RaptorQEncoder;
 typedef RaptorQ::Decoder<Alignment*, Alignment*> RaptorQDecoder;
 
 typedef RaptorQ::Symbol_Iterator<Alignment*, Alignment*> RaptorQSymbolIterator;
+
+const static std::chrono::duration<int64_t, std::milli> HEARTBEAT_INTERVAL =
+        std::chrono::milliseconds(50);
+
+typedef std::lock_guard<std::mutex> Guard;
 
 // A macro to disallow the copy constructor and operator= functions
 #ifndef DISALLOW_COPY_AND_ASSIGN
@@ -86,38 +103,48 @@ generateRandom()
     return std::rand();
 }
 
-size_t getPaddedSize(size_t size) {
-    if (size % ALIGNMENT_SIZE == 0) {
-        return size;
-    } else {
-        return size + ALIGNMENT_SIZE - size % ALIGNMENT_SIZE;
-    }
+/**
+ * TODO(YilongL)
+ */
+template<typename T>
+std::unique_ptr<T> receive(DCCPSocket* socket)
+{
+    char* datagram = socket->recv();
+    return std::unique_ptr<T>(reinterpret_cast<T*>(datagram));
 }
 
-bool poll(UDPSocket* udpSocket, UDPSocket::received_datagram& datagram)
+template<typename T>
+std::unique_ptr<T> receive(UDPSocket* socket)
 {
-    try {
-        datagram = udpSocket->recv();
-        return true;
-    } catch (const unix_error &e) {
-        if (e.code().value() != EAGAIN) {
-            printf("%s\n", e.what());
-        }
-        return false;
+    UDPSocket::received_datagram datagram = socket->recv();
+    if (datagram.recvlen <= 0) {
+        return nullptr;
     }
+    return std::unique_ptr<T>(reinterpret_cast<T*>(datagram.payload));
 }
 
 /**
- * TODO
+ * Serialize an object in its wire format and send it with the socket.
+ *
+ * \return
+ *      True if the object is successfully sent; False otherwise.
  */
 template<typename T, typename... Args>
-void sendInWireFormat(UDPSocket* udpSocket,
-                      const Address& dest,
+int sendInWireFormat(DCCPSocket* socket,
                       Args&&... args)
 {
     char raw[sizeof(T)];
     new(raw) T(static_cast<Args&&>(args)...);
-    udpSocket->sendbytesto(dest, raw, sizeof(T));
+    return socket->send(raw, sizeof(T));
+}
+
+template<typename T, typename... Args>
+void sendInWireFormat(UDPSocket* socket,
+                      Args&&... args)
+{
+    char raw[sizeof(T)];
+    new(raw) T(static_cast<Args&&>(args)...);
+    socket->sendbytes(raw, sizeof(T));
 }
 
 /**
@@ -127,13 +154,17 @@ struct Bitmask256 {
 
     std::bitset<64> bitset[4];
 
+    std::mutex mutex;
+
     Bitmask256()
         : bitset {0, 0, 0, 0}
+        , mutex()
     {}
 
     explicit
     Bitmask256(const uint64_t bitmask[4])
         : bitset {bitmask[0], bitmask[1], bitmask[2], bitmask[3]}
+        , mutex()
     {}
 
     /**
@@ -141,6 +172,7 @@ struct Bitmask256 {
      */
     void bitwiseOr(const Bitmask256& other)
     {
+        Guard _(mutex);
         bitset[0] |= other.bitset[0];
         bitset[1] |= other.bitset[1];
         bitset[2] |= other.bitset[2];
@@ -152,6 +184,7 @@ struct Bitmask256 {
      */
     uint8_t count()
     {
+        Guard _(mutex);
         return downCast<uint8_t>(bitset[0].count() + bitset[1].count()
                 + bitset[2].count() + bitset[3].count());
     }
@@ -161,7 +194,17 @@ struct Bitmask256 {
      */
     void set(uint8_t n, bool value = true)
     {
+        Guard _(mutex);
         bitset[n / 64].set(n % 64, value);
+    }
+
+    /**
+     * Sets first N bits in the bit mask to be 1;
+     */
+    void setFirstN(uint8_t n) {
+        for (uint8_t i = 0; i < n; i++) {
+            set(i);
+        }
     }
 
     /**
@@ -169,7 +212,14 @@ struct Bitmask256 {
      */
     bool test(uint8_t n)
     {
+        Guard _(mutex);
         return bitset[n / 64].test(n % 64);
+    }
+
+    std::array<std::bitset<64>, 4> toBitsetArray() {
+        Guard _(mutex);
+        return std::array<std::bitset<64>, 4>{
+                bitset[0], bitset[1], bitset[2], bitset[3]};
     }
 };
 
@@ -227,6 +277,15 @@ class FileWrapper {
         struct stat statBuf;
         stat(pathname.c_str(), &statBuf);
         return statBuf.st_size;
+    }
+
+    static size_t
+    getPaddedSize(size_t size) {
+        if (size % ALIGNMENT_SIZE == 0) {
+            return size;
+        } else {
+            return size + ALIGNMENT_SIZE - size % ALIGNMENT_SIZE;
+        }
     }
 
     int fd;

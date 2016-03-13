@@ -127,10 +127,15 @@ UDPSocket::received_datagram UDPSocket::recv( void )
     ts_hdr = CMSG_NXTHDR( &header, ts_hdr );
   }
 
+  char* payload = nullptr;
+  if (recv_len > 0) {
+    payload = new char[recv_len];
+    std::memcpy(payload, msg_payload, recv_len);
+  }
   received_datagram ret = {Address(datagram_source_address,
                                    header.msg_namelen),
                            timestamp,
-                           msg_payload,
+                           payload,
                            recv_len};
 
   return ret;
@@ -195,7 +200,7 @@ void UDPSocket::sendbytes( const char *payload, size_t length )
     SystemCall( "send", ::send( fd_num(),
         payload,
         length,
-				0 ) );
+	    0 ) );
 
   register_write();
 
@@ -236,3 +241,61 @@ void UDPSocket::set_timestamps( void )
 {
   setsockopt( SOL_SOCKET, SO_TIMESTAMPNS, int( true ) );
 }
+
+/* mark the socket as listening for incoming connections */
+void DCCPSocket::listen( const int backlog )
+{
+  SystemCall( "listen", ::listen( fd_num(), backlog ) );
+}
+
+/* accept a new incoming connection */
+DCCPSocket DCCPSocket::accept( void )
+{
+  return DCCPSocket( FileDescriptor( SystemCall( "accept", ::accept( fd_num(), 
+                                                 nullptr, nullptr ) ) ) );
+}
+
+/* send datagram to connected address */
+int DCCPSocket::send( const char* payload, int payload_len )
+{
+  ssize_t bytes_sent = ::send(fd_num(), payload, payload_len, 0 );
+  if (bytes_sent < 0) {
+    // perror("send");
+    return errno == EAGAIN ? -1 : -2;
+  }
+
+  if ( bytes_sent != payload_len ) {
+    throw runtime_error( "datagram payload too big for send()" );
+  }
+
+  return 0;
+}
+
+/* receive datagram from connected address */
+char* DCCPSocket::recv( void )
+{
+  const int MAX_DATA_SIZE = 65536;
+  char* recv_payload = new char[ MAX_DATA_SIZE ];
+
+  /* call recv */
+  int recv_len = ::recv( fd_num(), 
+                recv_payload, 
+                MAX_DATA_SIZE - 1,
+                0 );
+
+  if ( recv_len < 0 ) {
+    throw runtime_error( "recvfrom (oversized datagram)" );
+  }
+
+  // connection has been closed by the other side
+  if ( recv_len == 0) {
+    return NULL;
+  }
+
+  recv_payload[ recv_len ] = '\0';
+
+  // TODO fix: strlen(recv_payload) != recv_len in case we use 
+  // strlen() to get payload length in the future
+  return recv_payload;
+}
+
